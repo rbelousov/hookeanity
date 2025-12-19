@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hookeanity"
+version = "0.0.0"
+description = "Hookean elastodynamics"
+authors = [
+    { name = "Roman Belousov", email = "roman.belousov@embl.de" }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+requires-python = ">=3.13"
+
+dependencies = [
+    "numpy", "scipy", "pylebedev",
+    # "jax", "optax", "flax", "jaxopt",
+    # "matplotlib", "jupyterlab", "ipywidgets",
+    # "uncertainties"
+]
+
+[project.optional-dependencies]
+tests = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "pyright"]
+
+[tool.setuptools]
+packages = ["hookeanity"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+src = ["hookeanity", "tests"]
+include = ["**/*.py", "**/*.ipynb"]
+
+[tool.ruff.lint]
+select = ["D"]
+ignore = [
+  "D203",  # no blank line before class docstring (keep D211)
+  "D213",  # summary on first line (keep D212)
+  "D400", "D415", # Summary without period
+]
