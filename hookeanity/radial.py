@@ -120,16 +120,18 @@ class RadialPolynomial:
         return self._prefactor * eval_jacobi(self._order, 0, 1, x)
 
     @staticmethod
-    def quadrature(num: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    def quadrature(
+        spectral_order: int,
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         """Return radial quadrature
 
         Args:
-            num: Number of quadrature points
+            spectral_order: Order of spectral accuracy
 
         Returns:
             Grid of quadrature nodes and weights
 
         """
-        nodes, weights = jacobi_radau_quadrature(num)
+        nodes, weights = jacobi_radau_quadrature(spectral_order + 1)
 
         return (nodes + 1) / 2, weights / 4

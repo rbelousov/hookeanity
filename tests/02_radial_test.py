@@ -28,7 +28,7 @@ def test_jacobi_radau_quadrature():
 def test_radial_polynomial():
     """Test `RadialPolynomial`"""
     num = 5
-    nodes, weights = RadialPolynomial.quadrature(num)
+    nodes, weights = RadialPolynomial.quadrature(num - 1)
 
     # Integral of 1:  ∫_0^1 r dr = 1/2
     assert np.sum(weights) == pytest.approx(0.5)
@@ -50,7 +50,7 @@ def test_radial_polynomial():
 def test_derivative():
     """Test evaluation of the derivative of the radial polynomial"""
     num = 5
-    nodes, weights = RadialPolynomial.quadrature(num)
+    nodes, weights = RadialPolynomial.quadrature(num - 1)
     basis = [RadialPolynomial(order) for order in range(num)]
 
     poly = np.polynomial.Polynomial([1, 2, 3, 4, 5])
