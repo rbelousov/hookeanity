@@ -54,7 +54,7 @@ class SphericalHarmonic:
 
         """
         assert abs(order[1]) <= order[0], (
-            f"Polar-angle order ({order[1]}) exceeds the azimuthal order ({order[0]})"
+            f"Azimuthal-angle order ({order[1]}) exceeds the polar order ({order[0]})"
         )
         self._order = order
 
@@ -75,7 +75,7 @@ class SphericalHarmonic:
         ).reshape(-1)
 
     def partial_theta(self, grid: ArrayLike) -> NDArray[np.floating]:
-        """Return the derivative with respect to the azimuthal angle"""
+        """Return the derivative with respect to the polar angle"""
         grid = np.asarray(grid)
         _, partial = sph_legendre_p(
             self._order[0], self._order[1], grid[..., 0], diff_n=1
@@ -83,11 +83,8 @@ class SphericalHarmonic:
         return (partial * fourier(self._order[1], grid[..., 1])).reshape(-1)
 
     def partial_phi(self, grid: ArrayLike) -> NDArray[np.floating]:
-        """Return the derivative with respect to the polar angle"""
+        """Return the derivative with respect to the azimuthal angle"""
         grid = np.asarray(grid)
-        _, partial = sph_legendre_p(
-            self._order[0], self._order[1], grid[..., 0], diff_n=1
-        )
         return (
             sph_legendre_p(self._order[0], self._order[1], grid[..., 0])
             * fourier(self._order[1], grid[..., 1], derivative=True)
