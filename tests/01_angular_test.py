@@ -29,7 +29,9 @@ def test_spherical_harmonic():
     assert len(values) == 3
     assert values.tolist() == pytest.approx([0.191622, 0.0, -0.000336779], abs=1e-6)
 
-    nodes, weights = SphericalHarmonic.quadrature(15)
+    assert SphericalHarmonic.from_spectral_order(7) == 15
+
+    nodes, weights = SphericalHarmonic.quadrature(7)
     basis = [
         SphericalHarmonic((ell, m)) for ell in range(7) for m in range(-ell, ell + 1)
     ]
@@ -100,7 +102,7 @@ def analytic(
 
 def test_derivatives():
     """Test derivatives of the spherical harmonics"""
-    nodes, _ = SphericalHarmonic.quadrature(15)
+    nodes, _ = SphericalHarmonic.quadrature(2)
 
     for l, m in [(0, 0), (1, 0), (1, 1), (1, -1), (2, 0), (2, 1), (2, 2)]:
         val_a, dth_a, dph_a = analytic(l, m, nodes[:, 0], nodes[:, 1])

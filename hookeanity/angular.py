@@ -91,18 +91,34 @@ class SphericalHarmonic:
         ).reshape(-1)
 
     @staticmethod
-    def quadrature(order: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    def from_spectral_order(spectral_order: int) -> int:
+        """Find best order of the quadrature for a given spectral accuracy"""
+        n = 2 * spectral_order
+        for order in sorted(getattr(PyLebedev(), "_PyLebedev__datasource").keys()):
+            num = int(order)
+            if num >= n:
+                return num
+        raise ValueError(
+            f"No quadrature found for the spectral accuracy of order {spectral_order}"
+        )
+
+    @staticmethod
+    def quadrature(
+        spectral_order: int,
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         """Return Lebedev quadrature rules
 
         Note that weights of the Lebedev quadrature are already multiplied by the four-pi factor.
 
         Args:
-            order: Order of Lebedev quadrature
+            spectral_order: Desired spectral order of Lebedev quadrature
 
         Returns:
             Angular grid of solid angles (theta, phi) and their weights
 
         """
         lebedev = PyLebedev()
-        nodes, weights = lebedev.get_points_and_weights(order, solid_angles=True)
+        nodes, weights = lebedev.get_points_and_weights(
+            SphericalHarmonic.from_spectral_order(spectral_order), solid_angles=True
+        )
         return nodes[:, [1, 0]], 4 * np.pi * weights
