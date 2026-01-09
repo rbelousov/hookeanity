@@ -78,7 +78,7 @@ def jacobi_radau_quadrature(
 
 
 class RadialPolynomial:
-    """Jacobi polynomial for the radial component of the spherical coordinates
+    """Orthonormalized Jacobi (0,1)-polynomial for the radial component of the spherical coordinates
 
     Attributes:
         _order (int): Polynomial order
@@ -96,18 +96,28 @@ class RadialPolynomial:
         self._order = order
         self._prefactor = np.sqrt(2 * (order + 1))
 
-    def __call__(self, r: ArrayLike) -> NDArray[np.floating]:
+    def __call__(self, r: ArrayLike, derivative: bool = False) -> NDArray[np.floating]:
         """Evaluate the radial polynomial
 
         Args:
             r: Grid or radial values within the interval [0, 1]
+            derivative: When `True`, evaluate the derivative of the radial polynomial
 
         Returns:
-            Values of the radial polynomial
+            Values of the radial polynomial or its derivative
 
         """
-        r = np.asarray(r)
-        return self._prefactor * eval_jacobi(self._order, 0, 1, 2 * r - 1)
+        if self._order == 0:
+            return np.zeros_like(r) if derivative else np.full_like(r, self._prefactor)
+
+        x = 2 * np.asarray(r) - 1
+        if derivative:
+            return (
+                self._prefactor
+                * (self._order + 2)
+                * eval_jacobi(self._order - 1, 1, 2, x)
+            )
+        return self._prefactor * eval_jacobi(self._order, 0, 1, x)
 
     @staticmethod
     def quadrature(num: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:

@@ -45,3 +45,20 @@ def test_radial_polynomial():
                 assert value == pytest.approx(1), f"{{{(m, n)}}}"
             else:
                 assert value == pytest.approx(0), f"{{{(m, n)}}}"
+
+
+def test_derivative():
+    """Test evaluation of the derivative of the radial polynomial"""
+    num = 5
+    nodes, weights = RadialPolynomial.quadrature(num)
+    basis = [RadialPolynomial(order) for order in range(num)]
+
+    poly = np.polynomial.Polynomial([1, 2, 3, 4, 5])
+    coefs = [np.sum(weights * b(nodes) * poly(nodes)) for b in basis]
+    vals = np.asarray(
+        [
+            np.sum([c * b(node, derivative=True) for c, b in zip(coefs, basis)])
+            for node in nodes
+        ]
+    )
+    assert vals == pytest.approx(poly.deriv()(nodes))

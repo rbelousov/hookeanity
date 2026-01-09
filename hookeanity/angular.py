@@ -6,12 +6,43 @@ from scipy.special import sph_legendre_p
 from pylebedev import PyLebedev
 
 
+def fourier(
+    order: int, phi: ArrayLike, derivative: bool = False
+) -> NDArray[np.floating]:
+    """Evaluate real Fourier function of a given order
+
+    Args:
+        order: Order of the function
+        phi: Values of the argument
+        derivative: When `True`, evaluate the derivative of the Fourier function
+
+    Returns:
+        Value of the Fourier function or its derivative
+
+    """
+    if order == 0:
+        return (
+            np.zeros_like(phi, dtype=float)
+            if derivative
+            else np.ones_like(phi, dtype=float)
+        )
+
+    phi = np.asarray(phi)
+    prefactor = np.sqrt(2)
+    if derivative:
+        order = -order
+        prefactor *= order
+
+    if order < 0:
+        return prefactor * np.sin(-order * phi)
+    return prefactor * np.cos(order * phi)
+
+
 class SphericalHarmonic:
     """Real-valued spherical harmonics
 
     Attributes:
         _order (tuple[int, int]): Order (l, m) of the harmonics
-        _fourier (Callable[[np.Array], numpy.typing.NDArray[numpy.floating]]): Fourier basis functions
 
     """
 
@@ -26,15 +57,6 @@ class SphericalHarmonic:
             f"Polar-angle order ({order[1]}) exceeds the azimuthal order ({order[0]})"
         )
         self._order = order
-        self._fourier = (
-            (lambda x: np.full_like(x, 1.0))
-            if order[1] == 0
-            else (
-                (lambda x: np.sqrt(2) * np.sin(-self._order[1] * x))
-                if order[1] < 0
-                else (lambda x: np.sqrt(2) * np.cos(self._order[1] * x))
-            )
-        )
 
     def __call__(self, grid: ArrayLike) -> NDArray[np.floating]:
         """Return values of the spherical harmonic on a grid
@@ -49,7 +71,26 @@ class SphericalHarmonic:
         grid = np.asarray(grid)
         return (
             sph_legendre_p(self._order[0], self._order[1], grid[..., 0])
-            * self._fourier(grid[..., 1])
+            * fourier(self._order[1], grid[..., 1])
+        ).reshape(-1)
+
+    def partial_theta(self, grid: ArrayLike) -> NDArray[np.floating]:
+        """Return the derivative with respect to the azimuthal angle"""
+        grid = np.asarray(grid)
+        _, partial = sph_legendre_p(
+            self._order[0], self._order[1], grid[..., 0], diff_n=1
+        )
+        return (partial * fourier(self._order[1], grid[..., 1])).reshape(-1)
+
+    def partial_phi(self, grid: ArrayLike) -> NDArray[np.floating]:
+        """Return the derivative with respect to the polar angle"""
+        grid = np.asarray(grid)
+        _, partial = sph_legendre_p(
+            self._order[0], self._order[1], grid[..., 0], diff_n=1
+        )
+        return (
+            sph_legendre_p(self._order[0], self._order[1], grid[..., 0])
+            * fourier(self._order[1], grid[..., 1], derivative=True)
         ).reshape(-1)
 
     @staticmethod

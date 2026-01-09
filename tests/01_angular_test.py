@@ -2,7 +2,21 @@
 
 import pytest
 import numpy as np
-from hookeanity.angular import SphericalHarmonic
+from hookeanity.angular import fourier, SphericalHarmonic
+
+
+def test_fourier():
+    """Test `fourier()`"""
+    phis = np.array([1, 2, 3])
+    assert fourier(0, phis) == pytest.approx([1, 1, 1])
+    assert fourier(2, phis) == pytest.approx(np.sqrt(2) * np.cos(2 * phis))
+    assert fourier(-3, phis) == pytest.approx(np.sqrt(2) * np.sin(3 * phis))
+    assert fourier(3, phis, derivative=True) == pytest.approx(
+        -3 * np.sqrt(2) * np.sin(3 * phis)
+    )
+    assert fourier(-2, phis, derivative=True) == pytest.approx(
+        2 * np.sqrt(2) * np.cos(2 * phis)
+    )
 
 
 def test_spherical_harmonic():
