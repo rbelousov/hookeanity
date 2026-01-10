@@ -3,7 +3,11 @@
 import pytest
 import numpy as np
 from scipy.special import eval_jacobi
-from hookeanity.radial import jacobi_radau_quadrature, RadialPolynomial
+from hookeanity.radial import (
+    jacobi_radau_quadrature,
+    jacobi_lobatto_quadrature,
+    RadialPolynomial,
+)
 
 
 def test_jacobi_radau_quadrature():
@@ -18,6 +22,26 @@ def test_jacobi_radau_quadrature():
 
     for m in range(num):
         for n in range(num):
+            value = np.sum(weights * poly(m, nodes) * poly(n, nodes))
+            if m == n:
+                assert value == pytest.approx(2 / (n + 1)), f"{{{(m, n)}}}"
+            else:
+                assert value == pytest.approx(0), f"{{{(m, n)}}}"
+
+
+def test_jacobi_lobatto_quadrature():
+    """Test `jacobi_lobatto_quadrature()`"""
+    num = 5
+    nodes, weights = jacobi_lobatto_quadrature(num)
+    assert len(nodes) == num
+    assert len(weights) == len(nodes)
+
+    def poly(m, x):
+        return eval_jacobi(m, 0, 1, x)
+
+    spectral_order = (2 * num - 3) // 2
+    for m in range(spectral_order + 1):
+        for n in range(spectral_order + 1):
             value = np.sum(weights * poly(m, nodes) * poly(n, nodes))
             if m == n:
                 assert value == pytest.approx(2 / (n + 1)), f"{{{(m, n)}}}"

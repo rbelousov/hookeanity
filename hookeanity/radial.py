@@ -2,7 +2,7 @@
 
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
-from scipy.special import gamma, eval_jacobi
+from scipy.special import gamma, eval_jacobi, roots_jacobi
 
 
 def jacobi_radau_quadrature(
@@ -74,6 +74,85 @@ def jacobi_radau_quadrature(
     x, vecs = np.linalg.eigh(mtx)
     w = mu0 * (vecs[0, :] ** 2)
 
+    return x, w
+
+
+def jacobi_lobatto_quadrature(
+    num: int,
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    """Jacobi–Lobatto quadrature on [-1, 1] for (0,1)-Jacobi weights with endpoints x=-1 and x=+1 included
+
+    Args:
+        num (int): Number of quadrature points
+
+    Returns:
+        Nodes and weights of the quadrature points
+
+    Raises:
+        AssertionError: if num < 2
+
+    """
+    assert num >= 2, f"No Lobatto quadrature rule with {num} points"
+
+    # Jacobi parameters
+    a, b = 0.0, 1.0
+
+    # Zeroth moment (integral of the weight over [-1,1])
+    mu0 = 2.0 ** (a + b + 1.0) * gamma(a + 1.0) * gamma(b + 1.0) / gamma(a + b + 2.0)
+
+    # First moment for Jacobi weight with the mean is (b-a)/(a+b+2) yields mu1 = mu0 * mean
+    mu1 = mu0 * (b - a) / (a + b + 2.0)
+
+    # The pure endpoint Lobatto rule (no interior points)
+    if num == 2:
+        # Solve:
+        #   wL + wR = mu0
+        #  -wL + wR = mu1
+        wR = 0.5 * (mu0 + mu1)
+        wL = 0.5 * (mu0 - mu1)
+        return np.array([-1.0, 1.0], dtype=float), np.array([wL, wR], dtype=float)
+
+    # num >= 3: endpoints plus m interior nodes
+    m = num - 2
+
+    # Interior nodes are the roots of P_m^{(a+1,b+1)}(x)
+    z, _ = roots_jacobi(m, a + 1.0, b + 1.0)
+
+    # Interior weights (Petrova 202x, Thm 4.1; r=k=0 specialization):
+    alpha = a + 1.0
+    beta = b + 1.0
+
+    delta = (
+        2.0 ** (alpha + beta - 1.0)
+        * gamma(m + alpha + 1.0)
+        * gamma(m + beta + 1.0)
+        * (2.0 * m + alpha + beta + 2.0) ** 2
+        / (
+            gamma(m + 1.0)
+            * gamma(m + alpha + beta + 1.0)
+            * (m + 1.0) ** 2
+            * (m + alpha + beta + 1.0) ** 2
+        )
+    )
+
+    Pm1 = eval_jacobi(m + 1, alpha, beta, z)
+    w_int = delta / (Pm1**2)
+
+    # Endpoint weights: determine them from exactness for degree 0 and 1
+    sum_int = float(np.sum(w_int))
+    sumx_int = float(np.sum(w_int * z))
+
+    rhs0 = mu0 - sum_int
+    rhs1 = mu1 - sumx_int
+
+    # Solve:
+    #   wL + wR = rhs0
+    #  -wL + wR = rhs1
+    wR = 0.5 * (rhs0 + rhs1)
+    wL = 0.5 * (rhs0 - rhs1)
+
+    x = np.concatenate(([-1.0], z, [1.0])).astype(float)
+    w = np.concatenate(([wL], w_int, [wR])).astype(float)
     return x, w
 
 
