@@ -44,10 +44,10 @@ def test_spherical_harmonic():
                 assert value == pytest.approx(0, abs=1e-6), f"{{{(i, j)}}}"
 
 
-def analytic(
+def analytic_derivative(
     l: int, m: int, theta: np.ndarray, phi: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Analytic formulas for testing
+    """Analytic formulas for testing derivatives of the spherical harmonics
 
     Args:
         l: Polar order
@@ -105,7 +105,7 @@ def test_derivatives():
     nodes, _ = SphericalHarmonic.quadrature(2)
 
     for l, m in [(0, 0), (1, 0), (1, 1), (1, -1), (2, 0), (2, 1), (2, 2)]:
-        val_a, dth_a, dph_a = analytic(l, m, nodes[:, 0], nodes[:, 1])
+        val_a, dth_a, dph_a = analytic_derivative(l, m, nodes[:, 0], nodes[:, 1])
 
         sh = SphericalHarmonic((l, m))
         val = sh(nodes)
