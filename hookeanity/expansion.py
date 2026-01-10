@@ -11,6 +11,7 @@ from .angular import SphericalHarmonic
 Float: TypeAlias = float | np.floating
 ScalarFunction: TypeAlias = Callable[[Float, Float, Float], Float]
 VectorFunction: TypeAlias = Sequence[ScalarFunction]
+ScalarField: TypeAlias = NDArray[np.floating]
 
 
 class Expansion:
@@ -53,7 +54,9 @@ class Expansion:
             yield np.array([r, theta, phi]), wgt[0] * wgt[1]
 
     @staticmethod
-    def basis_scalar(poly: RadialPolynomial, sph: SphericalHarmonic) -> ScalarFunction:
+    def basis_function(
+        poly: RadialPolynomial, sph: SphericalHarmonic
+    ) -> ScalarFunction:
         """Return wrapper of radial and angular functions"""
 
         def wrapper(r, theta, phi):
@@ -64,9 +67,9 @@ class Expansion:
     def basis_functions(self) -> Iterator[ScalarFunction]:
         """Return generator of basis functions"""
         for poly, sph in product(self._radial_functions, self._angular_functions):
-            yield self.basis_scalar(poly, sph)
+            yield self.basis_function(poly, sph)
 
-    def to_scalar(
+    def to_scalar_function(
         self, coefficients: NDArray[np.floating], copy=True
     ) -> ScalarFunction:
         """Create a scalar function identified by its expansion coefficients
@@ -88,7 +91,28 @@ class Expansion:
 
         return wrapper
 
-    def expand_scalar(self, scalar: ScalarFunction) -> NDArray[np.floating]:
+    def to_scalar_field(
+        self, coefficients: NDArray[np.floating], copy=True
+    ) -> ScalarFunction:
+        """Create a scalar field identified by its expansion coefficients
+
+        Args:
+            coefficients: Values of the coefficients
+            copy: When `True`, the values of the coefficients are copied
+
+        Returns:
+            Values of the field identified by its expansion coefficients
+
+        """
+        cfs = np.asarray(coefficients)
+        return np.sum(
+            [
+                [cf * bf(*point) for cf, bf in zip(cfs, self.basis_functions())]
+                for point in self.points()
+            ]
+        )
+
+    def expand_scalar_function(self, scalar: ScalarFunction) -> NDArray[np.floating]:
         """Expand a scalar function in the pseudospectral basis
 
         Args:
