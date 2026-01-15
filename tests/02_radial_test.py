@@ -30,10 +30,10 @@ def test_radial_polynomial():
     num = 5
     nodes, weights = RadialPolynomial.quadrature(num - 1)
 
-    # Integral of 1:  ∫_0^1 r dr = 1/3
+    # Integral of 1:  ∫_0^1 r^2 dr = 1/3
     assert np.sum(weights) == pytest.approx(1 / 3)
 
-    # Integral of r:  ∫_0^1 r^2 dr = 1/4
+    # Integral of r:  ∫_0^1 r^3 dr = 1/4
     assert np.sum(weights * nodes) == pytest.approx(1 / 4)
 
     basis = [RadialPolynomial(order) for order in range(num)]

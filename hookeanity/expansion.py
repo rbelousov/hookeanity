@@ -10,8 +10,6 @@ from .angular import SphericalHarmonic
 
 Float: TypeAlias = float | np.floating
 ScalarFunction: TypeAlias = Callable[[Float, Float, Float], Float]
-VectorFunction: TypeAlias = Sequence[ScalarFunction]
-ScalarField: TypeAlias = NDArray[np.floating]
 
 
 class Expansion:
@@ -90,27 +88,6 @@ class Expansion:
             )
 
         return wrapper
-
-    def to_scalar_field(
-        self, coefficients: NDArray[np.floating], copy=True
-    ) -> ScalarFunction:
-        """Create a scalar field identified by its expansion coefficients
-
-        Args:
-            coefficients: Values of the coefficients
-            copy: When `True`, the values of the coefficients are copied
-
-        Returns:
-            Values of the field identified by its expansion coefficients
-
-        """
-        cfs = np.asarray(coefficients)
-        return np.sum(
-            [
-                [cf * bf(*point) for cf, bf in zip(cfs, self.basis_functions())]
-                for point in self.points()
-            ]
-        )
 
     def expand_scalar_function(self, scalar: ScalarFunction) -> NDArray[np.floating]:
         """Expand a scalar function in the pseudospectral basis
