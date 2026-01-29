@@ -34,8 +34,8 @@ def fourier(
         prefactor *= order
 
     if order < 0:
-        return prefactor * np.sin(-order * phi)
-    return prefactor * np.cos(order * phi)
+        return prefactor * np.sin(-order * phi) * (1 if order % 2 == 0 else -1)
+    return prefactor * np.cos(order * phi) * (1 if order % 2 == 0 else -1)
 
 
 class SphericalHarmonic:
@@ -70,7 +70,7 @@ class SphericalHarmonic:
         """
         grid = np.asarray(grid)
         return (
-            sph_legendre_p(self._order[0], self._order[1], grid[..., 0])
+            sph_legendre_p(self._order[0], abs(self._order[1]), grid[..., 0])
             * fourier(self._order[1], grid[..., 1])
         ).reshape(-1)
 
@@ -78,7 +78,7 @@ class SphericalHarmonic:
         """Return the derivative with respect to the polar angle"""
         grid = np.asarray(grid)
         _, partial = sph_legendre_p(
-            self._order[0], self._order[1], grid[..., 0], diff_n=1
+            self._order[0], abs(self._order[1]), grid[..., 0], diff_n=1
         )
         return (partial * fourier(self._order[1], grid[..., 1])).reshape(-1)
 
@@ -86,14 +86,14 @@ class SphericalHarmonic:
         """Return the derivative with respect to the azimuthal angle"""
         grid = np.asarray(grid)
         return (
-            sph_legendre_p(self._order[0], self._order[1], grid[..., 0])
+            sph_legendre_p(self._order[0], abs(self._order[1]), grid[..., 0])
             * fourier(self._order[1], grid[..., 1], derivative=True)
         ).reshape(-1)
 
     @staticmethod
     def from_spectral_order(spectral_order: int) -> int:
         """Find best order of the quadrature for a given spectral accuracy"""
-        n = 2 * spectral_order
+        n = 2 * spectral_order + 1
         for order in sorted(getattr(PyLebedev(), "_PyLebedev__datasource").keys()):
             num = int(order)
             if num >= n:
@@ -121,4 +121,6 @@ class SphericalHarmonic:
         nodes, weights = lebedev.get_points_and_weights(
             SphericalHarmonic.from_spectral_order(spectral_order), solid_angles=True
         )
-        return nodes[:, [1, 0]], 4 * np.pi * weights
+        nodes = nodes[:, [1, 0]]
+        nodes[:, 1] += np.pi
+        return nodes, 4 * np.pi * weights

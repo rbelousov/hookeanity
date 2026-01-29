@@ -29,6 +29,7 @@ def test_radial_polynomial():
     """Test `RadialPolynomial`"""
     num = 5
     nodes, weights = RadialPolynomial.quadrature(num - 1)
+    assert RadialPolynomial(0)(nodes) == pytest.approx(np.full_like(nodes, np.sqrt(3)))
 
     # Integral of 1:  ∫_0^1 r^2 dr = 1/3
     assert np.sum(weights) == pytest.approx(1 / 3)
