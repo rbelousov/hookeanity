@@ -124,3 +124,36 @@ class SphericalHarmonic:
         nodes = nodes[:, [1, 0]]
         nodes[:, 1] += np.pi
         return nodes, 4 * np.pi * weights
+
+
+class HarmonicInterpolation:
+    """Interpolation of functions with a localized Lagrange kernel based on spherical harmonics"""
+
+    def __init__(self, order: int):
+        """Initialize interpolating functions of a given order"""
+        self._nodes, self._weights = SphericalHarmonic.quadrature(order)
+
+        lmax = np.sqrt(len(self._nodes)).astype(int) + 1
+        self._basis = [
+            SphericalHarmonic((l, m)) for l in range(lmax + 1) for m in range(-l, l + 1)
+        ]
+
+        self._values = np.array([sh(self._nodes) for sh in self._basis])
+        self._matrix = np.einsum("yp,yq", self._values, self._values, dtype=np.float64)
+
+        self._inverse = np.linalg.inv(self._matrix)
+
+        self._funcs = [
+            lambda grid: np.einsum(
+                "q,yq,yx", cfs, self._values, [sh(grid) for sh in self._basis]
+            )
+            for cfs in self._inverse
+        ]
+
+    def __getitem__(self, index):
+        """Get Lagrange function"""
+        return self._funcs[index]
+
+    def __len__(self):
+        """Return number of Lagrange kernels"""
+        return len(self._funcs)

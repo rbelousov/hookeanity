@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 from scipy.special import sph_legendre_p
-from hookeanity.angular import fourier, SphericalHarmonic
+from hookeanity.angular import fourier, SphericalHarmonic, HarmonicInterpolation
 
 
 def test_fourier():
@@ -344,3 +344,25 @@ def test_quadrature():
     assert np.all(nodes[:, 0] <= np.pi)
     assert np.all(nodes[:, 1] >= 0)
     assert np.all(nodes[:, 1] <= 2 * np.pi)
+
+
+def test_harmonic_interpolation():
+    """Test `HarmonicInterpolation`"""
+    inter = HarmonicInterpolation(2)
+    assert np.linalg.det(inter._matrix) > 1
+    assert np.linalg.cond(inter._matrix) < 1e5
+    assert inter._inverse @ inter._matrix == pytest.approx(np.eye(len(inter)))
+
+    order_2 = len(inter) // 2
+    for p in range(len(inter)):
+        lp = inter[p](inter._nodes)
+        assert np.sum(lp) == pytest.approx(1)
+        for q in range(len(inter)):
+            lq = inter[q](inter._nodes)
+
+    nodes, weights = SphericalHarmonic.quadrature(len(inter))
+    for p in range(len(inter)):
+        lp = inter[p](nodes)
+        for q in range(len(inter)):
+            lq = inter[q](nodes)
+            np.einsum("p,p,p", weights, lp, lq) == pytest.approx(inter._inverse[p, q])
