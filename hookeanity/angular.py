@@ -159,7 +159,7 @@ class HarmonicInterpolation:
         """Initialize interpolating functions of a given order"""
         self._nodes, self._weights = SphericalHarmonic.quadrature(order)
 
-        lmax = 2 * order + 1
+        lmax = np.sqrt(len(self._nodes)).astype(int) + 1
         self._basis = [
             SphericalHarmonic((l, m)) for l in range(lmax + 1) for m in range(-l, l + 1)
         ]
