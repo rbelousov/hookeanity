@@ -126,6 +126,32 @@ class SphericalHarmonic:
         return nodes, 4 * np.pi * weights
 
 
+def geodesic_cos(angles_a: ArrayLike, angles_b: ArrayLike) -> NDArray[np.floating]:
+    """Compute cosine of the geodesic distance between two sets of angles on a unit sphere
+
+    Args:
+        angles_a: First set of solid angles
+        angles_b: Second set of solid angles
+
+    Returns:
+        Cosine of the geodesic distance between the angles
+
+    """
+    angles_a = np.asarray(angles_a)
+    angles_b = np.asarray(angles_b)
+
+    cos_theta_a = np.cos(angles_a[..., 0])
+    sin_theta_a = np.sin(angles_a[..., 0])
+    cos_theta_b = np.cos(angles_b[..., 0])
+    sin_theta_b = np.sin(angles_b[..., 0])
+
+    delta_phi = angles_a[..., 1] - angles_b[..., 1]
+    cos_delta_phi = np.cos(delta_phi)
+
+    cos_gamma = cos_theta_a * cos_theta_b + sin_theta_a * sin_theta_b * cos_delta_phi
+    return np.clip(cos_gamma, -1.0, 1.0)
+
+
 class HarmonicInterpolation:
     """Interpolation of functions with a localized Lagrange kernel based on spherical harmonics"""
 
@@ -133,27 +159,28 @@ class HarmonicInterpolation:
         """Initialize interpolating functions of a given order"""
         self._nodes, self._weights = SphericalHarmonic.quadrature(order)
 
-        lmax = np.sqrt(len(self._nodes)).astype(int) + 1
+        lmax = 2 * order + 1
         self._basis = [
             SphericalHarmonic((l, m)) for l in range(lmax + 1) for m in range(-l, l + 1)
         ]
 
         self._values = np.array([sh(self._nodes) for sh in self._basis])
-        self._matrix = np.einsum("yp,yq", self._values, self._values, dtype=np.float64)
-
+        self._matrix = np.einsum("yp,yq", self._values, self._values)
         self._inverse = np.linalg.inv(self._matrix)
-
-        self._funcs = [
-            lambda grid: np.einsum(
-                "q,yq,yx", cfs, self._values, [sh(grid) for sh in self._basis]
-            )
-            for cfs in self._inverse
-        ]
 
     def __getitem__(self, index):
         """Get Lagrange function"""
-        return self._funcs[index]
+
+        def wrapper(angles: ArrayLike) -> NDArray[np.floating]:
+            return np.einsum(
+                "q,yq,yp",
+                self._inverse[index],
+                self._values,
+                [sh(angles) for sh in self._basis],
+            )
+
+        return wrapper
 
     def __len__(self):
         """Return number of Lagrange kernels"""
-        return len(self._funcs)
+        return len(self._nodes)

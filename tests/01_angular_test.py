@@ -353,16 +353,12 @@ def test_harmonic_interpolation():
     assert np.linalg.cond(inter._matrix) < 1e5
     assert inter._inverse @ inter._matrix == pytest.approx(np.eye(len(inter)))
 
-    order_2 = len(inter) // 2
-    for p in range(len(inter)):
+    sz = len(inter)
+    for p in range(sz):
         lp = inter[p](inter._nodes)
         assert np.sum(lp) == pytest.approx(1)
-        for q in range(len(inter)):
+        assert lp[p] == pytest.approx(1)
+        for q in range(sz):
             lq = inter[q](inter._nodes)
-
-    nodes, weights = SphericalHarmonic.quadrature(len(inter))
-    for p in range(len(inter)):
-        lp = inter[p](nodes)
-        for q in range(len(inter)):
-            lq = inter[q](nodes)
-            np.einsum("p,p,p", weights, lp, lq) == pytest.approx(inter._inverse[p, q])
+            expected = 1.0 if p == q else 0.0
+            assert np.einsum("n,n", lp, lq) == pytest.approx(expected)
