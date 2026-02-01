@@ -91,16 +91,20 @@ class SphericalHarmonic:
         ).reshape(-1)
 
     @staticmethod
-    def from_spectral_order(spectral_order: int) -> int:
-        """Find best order of the quadrature for a given spectral accuracy"""
-        n = 2 * spectral_order + 1
+    def find_order(lmax: int) -> int:
+        """Find a tabulated order of the Lebedev quadrature that integrates spherical harmonics up to `lmax`"""
         for order in sorted(getattr(PyLebedev(), "_PyLebedev__datasource").keys()):
             num = int(order)
-            if num >= n:
+            if num >= lmax:
                 return num
         raise ValueError(
-            f"No quadrature found for the spectral accuracy of order {spectral_order}"
+            f"No quadrature found for the spectral accuracy of order {lmax}"
         )
+    
+    @staticmethod
+    def from_spectral_order(spectral_order: int) -> int:
+        """Find best order of the quadrature for a given spectral accuracy"""
+        return SphericalHarmonic.find_order(2 * spectral_order + 1)
 
     @staticmethod
     def quadrature(
@@ -126,61 +130,80 @@ class SphericalHarmonic:
         return nodes, 4 * np.pi * weights
 
 
-def geodesic_cos(angles_a: ArrayLike, angles_b: ArrayLike) -> NDArray[np.floating]:
-    """Compute cosine of the geodesic distance between two sets of angles on a unit sphere
+# def geodesic_cos(angles_a: ArrayLike, angles_b: ArrayLike) -> NDArray[np.floating]:
+#     """Compute cosine of the geodesic distance between two sets of angles on a unit sphere
 
-    Args:
-        angles_a: First set of solid angles
-        angles_b: Second set of solid angles
+#     Args:
+#         angles_a: First set of solid angles
+#         angles_b: Second set of solid angles
 
-    Returns:
-        Cosine of the geodesic distance between the angles
+#     Returns:
+#         Cosine of the geodesic distance between the angles
 
-    """
-    angles_a = np.asarray(angles_a)
-    angles_b = np.asarray(angles_b)
+#     """
+#     angles_a = np.asarray(angles_a)
+#     angles_b = np.asarray(angles_b)
 
-    cos_theta_a = np.cos(angles_a[..., 0])
-    sin_theta_a = np.sin(angles_a[..., 0])
-    cos_theta_b = np.cos(angles_b[..., 0])
-    sin_theta_b = np.sin(angles_b[..., 0])
+#     cos_theta_a = np.cos(angles_a[..., 0])
+#     sin_theta_a = np.sin(angles_a[..., 0])
+#     cos_theta_b = np.cos(angles_b[..., 0])
+#     sin_theta_b = np.sin(angles_b[..., 0])
 
-    delta_phi = angles_a[..., 1] - angles_b[..., 1]
-    cos_delta_phi = np.cos(delta_phi)
+#     delta_phi = angles_a[..., 1] - angles_b[..., 1]
+#     cos_delta_phi = np.cos(delta_phi)
 
-    cos_gamma = cos_theta_a * cos_theta_b + sin_theta_a * sin_theta_b * cos_delta_phi
-    return np.clip(cos_gamma, -1.0, 1.0)
+#     cos_gamma = cos_theta_a * cos_theta_b + sin_theta_a * sin_theta_b * cos_delta_phi
+#     return np.clip(cos_gamma, -1.0, 1.0)
 
 
-class HarmonicInterpolation:
-    """Interpolation of functions with a localized Lagrange kernel based on spherical harmonics"""
+# class HarmonicInterpolation:
+#     """Interpolation of functions with a localized Lagrange kernel based on spherical harmonics"""
 
-    def __init__(self, order: int):
-        """Initialize interpolating functions of a given order"""
-        self._nodes, self._weights = SphericalHarmonic.quadrature(order)
+#     def __init__(self, order: int, bandfilter: str = "Helmholtz"):
+#         """Initialize interpolating functions of a given order"""
+#         self._nodes, _ = SphericalHarmonic.quadrature(order)
 
-        lmax = np.sqrt(len(self._nodes)).astype(int) + 1
-        self._basis = [
-            SphericalHarmonic((l, m)) for l in range(lmax + 1) for m in range(-l, l + 1)
-        ]
+#         lmax = SphericalHarmonic.find_order(2 * order + 1)
+#         self._basis = [
+#             SphericalHarmonic((l, m)) for l in range(lmax + 1) for m in range(-l, l + 1)
+#         ]
+#         bandfunction = {
+#             "Helmholtz": lambda l: ((lmax + 1) ** 2 - l * (l+1)) ** -1,
+#             "Matern": lambda l: (1 + l * (l + 1)) ** -3
+#         }[bandfilter]
+    
+#         self._bandfilter = np.array([bandfunction(l) for l in range(lmax + 1) for m in range(-l, l + 1)])
+#         self._values = np.array([sh(self._nodes) for sh in self._basis])
+#         self._theta = np.array([sh.partial_theta(self._nodes) for sh in self._basis])
 
-        self._values = np.array([sh(self._nodes) for sh in self._basis])
-        self._matrix = np.einsum("yp,yq", self._values, self._values)
-        self._inverse = np.linalg.inv(self._matrix)
+#         matrix = np.einsum("y,yp,yq", self._bandfilter, self._values, self._values)
+#         # assert np.linalg.det(matrix) >= 1, "Singular interpolation matrix"
+#         # assert np.linalg.cond(matrix) < 1e5, "Ill-conditioned interpolation matrix"
+#         self._coefficients = np.linalg.pinv(matrix)
 
-    def __getitem__(self, index):
-        """Get Lagrange function"""
+#     def __getitem__(self, index):
+#         """Get Lagrange function"""
 
-        def wrapper(angles: ArrayLike) -> NDArray[np.floating]:
-            return np.einsum(
-                "q,yq,yp",
-                self._inverse[index],
-                self._values,
-                [sh(angles) for sh in self._basis],
-            )
+#         def wrapper(angles: ArrayLike) -> NDArray[np.floating]:
+#             return np.einsum(
+#                 "y,q,yq,yp",
+#                 self._bandfilter,
+#                 self._coefficients[index],
+#                 self._values,
+#                 [sh(angles) for sh in self._basis],
+#             )
 
-        return wrapper
+#         return wrapper
 
-    def __len__(self):
-        """Return number of Lagrange kernels"""
-        return len(self._nodes)
+#     def __len__(self):
+#         """Return number of Lagrange kernels"""
+#         return len(self._nodes)
+    
+#     def partial_theta(self):
+#         """Return matrix form of the derivative operator with respect tho the polar angle"""
+#         return np.einsum(
+#             "pr,yq,yp",
+#             self._coefficients,
+#             self._values,
+#             self._theta,            
+#         )
