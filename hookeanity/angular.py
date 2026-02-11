@@ -102,7 +102,7 @@ class SphericalHarmonic:
         raise ValueError(
             f"No quadrature found for the spectral accuracy of order {lmax}"
         )
-    
+
     @staticmethod
     def from_spectral_order(spectral_order: int) -> int:
         """Find best order of the quadrature for a given spectral accuracy"""
@@ -161,27 +161,46 @@ def geodesic_cos(angles_a: ArrayLike, angles_b: ArrayLike) -> NDArray[np.floatin
 class MaternInterpolation:
     """Sobolev-Matérn interpolation of functions"""
 
-    def __init__(self, nodes: NDArray[np.floating], smoothness: float = 3.0, lmax: int | None = None):
+    def __init__(
+        self,
+        nodes: NDArray[np.floating],
+        smoothness: float = 3.0,
+        lmax: int | None = None,
+        weights: NDArray[np.floating] | None = None,
+    ):
         """Initialize interpolation grid
 
         Smoothness parameter 3 should yield accurate second-order derivatives.
-        
+
         Args:
             nodes: Nodes of interpolation
             smoothness: Smoothness of the interpolation
             lmax: Order of kernel expansion defaults to the square root of the number of particles
+            weights: Optional quadrature weights
+
         """
         self.lmax = np.sqrt(len(nodes)).astype(int) if lmax is None else lmax
         basis = list(self.basis())
-    
-        self._bandfilter = np.array([(1 + l * (l + 1)) ** -(1 + smoothness) for l in range(self.lmax + 1) for m in range(-l, l + 1)])
+
+        self._bandfilter = np.array(
+            [
+                (1 + l * (l + 1)) ** -(1 + smoothness)
+                for l in range(self.lmax + 1)
+                for m in range(-l, l + 1)
+            ]
+        )
         self._values = np.array([sh(nodes) for sh in basis])
         self._theta = np.array([sh.partial_theta(nodes) for sh in basis])
         self._phi = np.array([sh.partial_phi(nodes) for sh in basis])
+        self._weights = (
+            np.ones(len(nodes), dtype=float)
+            if weights is None
+            else np.asarray(weights, dtype=float)
+        )
 
         matrix = np.einsum("y,yp,yq", self._bandfilter, self._values, self._values)
         self._coefficients = np.linalg.pinv(matrix)
-    
+
     def basis(self) -> Iterator[SphericalHarmonic]:
         """Return generator of basis functions"""
         for l in range(self.lmax + 1):
@@ -198,36 +217,40 @@ class MaternInterpolation:
                 self._coefficients[index],
                 self._values,
                 [sh(angles) for sh in self.basis()],
-            )
+            ) / np.sqrt(self._weights[index])
 
         return wrapper
 
     def __len__(self):
         """Return number of Lagrange kernels"""
         return self._values.shape[1]
-    
+
     def partial_theta(self):
         """Return matrix form of the derivative operator with respect tho the polar angle"""
         return np.einsum(
-            "y,yr,yq,pq->rp",
+            "y,yr,yq,pq,p->rp",
             self._bandfilter,  # y
-            self._theta,       # y r
-            self._values,      # y q
-            self._coefficients # p q
+            self._theta,  # y r
+            self._values,  # y q
+            self._coefficients,  # p q
+            1 / np.sqrt(self._weights),
         )
 
     def partial_phi(self):
         """Return matrix form of the derivative operator with respect tho the polar angle"""
         return np.einsum(
-            "y,yr,yq,pq->rp",
+            "y,yr,yq,pq,p->rp",
             self._bandfilter,  # y
-            self._phi,       # y r
-            self._values,      # y q
-            self._coefficients # p q
+            self._phi,  # y r
+            self._values,  # y q
+            self._coefficients,  # p q
+            1 / np.sqrt(self._weights),
         )
+
 
 class LocalFiniteDifferences:
     """Method of local finite differences"""
+
     def __init__(self, shape: tuple[int, int]):
         """Initialize interpolating functions of a given order"""
         assert shape[0] >= 2 and shape[1] >= 4, "Shape must be at least (2, 4)"
@@ -235,17 +258,17 @@ class LocalFiniteDifferences:
         self._weights = np.pi * np.array([1, 2]) / np.array(shape)
         self._thetas = (np.arange(shape[0], dtype=float) + 0.5) * self._weights[0]
         self._phis = np.arange(shape[1], dtype=float) * self._weights[1]
-        self._nodes = np.array([
-            [theta, phi]
-            for theta in self._thetas for phi in self._phis
-        ])
-    
+        self._nodes = np.array(
+            [[theta, phi] for theta in self._thetas for phi in self._phis]
+        )
+
     def partial_theta(self):
-        """Derivative operator with respect to the polar angle"""
+        """Return derivative operator with respect to the polar angle"""
+
         def element(row, col):
             if row[1] != col[1]:
                 return 0.0
-            
+
             if row[0] == 0:
                 if col[0] == row[0]:
                     return -1.0
@@ -262,10 +285,16 @@ class LocalFiniteDifferences:
                 return -0.5
 
             return 0.0
-                          
-        return np.array([
-            [
-                element(row, col) for col in product(range(self._shape[0]), range(self._shape[1]))
-            ] for row in product(range(self._shape[0]), range(self._shape[1]))
-        ]) / self._weights[0]
-     
+
+        return (
+            np.array(
+                [
+                    [
+                        element(row, col)
+                        for col in product(range(self._shape[0]), range(self._shape[1]))
+                    ]
+                    for row in product(range(self._shape[0]), range(self._shape[1]))
+                ]
+            )
+            / self._weights[0]
+        )
