@@ -3,7 +3,8 @@
 import pytest
 import numpy as np
 from scipy.special import sph_legendre_p, legendre
-from hookeanity.angular import fourier, SphericalHarmonic, geodesic_cos, HarmonicInterpolation
+from hookeanity.angular import fourier, SphericalHarmonic, geodesic_cos
+from hookeanity.angular import MaternInterpolation, LocalFiniteDifferences
 
 
 def test_fourier():
@@ -359,32 +360,53 @@ def test_legendre():
             expected = (2 * l + 1) / (4 * np.pi) * legendre(l)(geodesic_cos(ref, nodes))
             assert value == pytest.approx(expected, abs=1e-6), f"Legendre polynomial mismatched at order {l}"
 
-# def test_harmonic_interpolation():
-#     """Test `HarmonicInterpolation`"""
-#     inter = HarmonicInterpolation(2)
-#     matrix = np.einsum("y,yp,yq", inter._bandfilter, inter._values, inter._values)
-#     assert inter._coefficients @ matrix == pytest.approx(np.eye(len(inter)))
+def test_harmonic_interpolation():
+    """Test `HarmonicInterpolation`"""
+    nodes, _ = SphericalHarmonic.quadrature(5)
+    inter = MaternInterpolation(nodes)
+    precision = 1e-1
+    matrix = np.einsum("y,yp,yq", inter._bandfilter, inter._values, inter._values)
+    assert inter._coefficients @ matrix == pytest.approx(np.eye(len(inter)), abs=precision)
+    rng = np.random.default_rng(seed=0)
+    npoints = 10
+
+    sz = len(inter)
+    for p in range(sz):
+        lp = inter[p](nodes)
+        assert np.sum(lp) == pytest.approx(1, abs=precision)
+        assert lp[p] == pytest.approx(1, abs=precision)
+        for q in range(sz):
+            lq = inter[q](nodes)
+            expected = 1.0 if p == q else 0.0
+            assert np.einsum("n,n", lp, lq) == pytest.approx(expected, abs=precision)
+
+    precision = 1e-3
+    oper_theta = inter.partial_theta()
+    oper_phi = inter.partial_phi()
+    for l, m in [(0, 0), (1, 0), (1, 1), (1, -1), (2, 0), (2, 1), (2, 2)]:
+        sh = SphericalHarmonic((l, m))
+        val = sh(nodes)
+        dth = sh.partial_theta(nodes)
+        dph = sh.partial_phi(nodes)
+        sh_theta = oper_theta @ val
+        sh_phi = oper_phi @ val
+        points = rng.choice(list(range(len(nodes))), size=npoints, replace=False)
+        assert sh_theta[points] == pytest.approx(dth[points], abs=precision), f"Incorrect derivative at order {(l, m)}"
+        assert sh_phi[points] == pytest.approx(dph[points], abs=precision), f"Incorrect derivative at order {(l, m)}"
+
+
+# def test_finite_differences():
+#     """Test `LocalFiniteDifferences"""
+#     scheme = LocalFiniteDifferences((20, 5))
 #     rng = np.random.default_rng(seed=0)
-#     npoints = 10
+#     npoints = 8
 
-#     sz = len(inter)
-#     for p in range(sz):
-#         lp = inter[p](inter._nodes)
-#         assert np.sum(lp) == pytest.approx(1)
-#         assert lp[p] == pytest.approx(1)
-#         for q in range(sz):
-#             lq = inter[q](inter._nodes)
-#             expected = 1.0 if p == q else 0.0
-#             assert np.einsum("n,n", lp, lq) == pytest.approx(expected)
-
-#     inter = HarmonicInterpolation(20, bandfilter="Matern")
 #     precision = 1e-3
-#     oper_theta = inter.partial_theta()
+#     oper_theta = scheme.partial_theta()
 #     for l, m in [(0, 0), (1, 0), (1, 1), (1, -1), (2, 0), (2, 1), (2, 2)]:
 #         sh = SphericalHarmonic((l, m))
-#         val = sh(inter._nodes)
-#         dth = sh.partial_theta(inter._nodes)
-#         dph = sh.partial_phi(inter._nodes)
+#         val = sh(scheme._nodes)
+#         dth = sh.partial_theta(scheme._nodes)
 #         sh_theta = oper_theta @ val
-#         points = rng.choice(list(range(len(inter._nodes))), size=npoints, replace=False)
+#         points = rng.choice(list(range(len(scheme._nodes))), size=npoints, replace=False)
 #         assert sh_theta[points] == pytest.approx(dth[points], abs=precision), f"Incorrect derivative at order {(l, m)}"

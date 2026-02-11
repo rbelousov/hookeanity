@@ -1,6 +1,8 @@
 """Real spherical harmonics for the solid-angle components of spherical reference frame"""
 
 import numpy as np
+from collections.abc import Iterator
+from itertools import product
 from numpy.typing import NDArray, ArrayLike
 from scipy.special import sph_legendre_p
 from pylebedev import PyLebedev
@@ -130,80 +132,140 @@ class SphericalHarmonic:
         return nodes, 4 * np.pi * weights
 
 
-# def geodesic_cos(angles_a: ArrayLike, angles_b: ArrayLike) -> NDArray[np.floating]:
-#     """Compute cosine of the geodesic distance between two sets of angles on a unit sphere
+def geodesic_cos(angles_a: ArrayLike, angles_b: ArrayLike) -> NDArray[np.floating]:
+    """Compute cosine of the geodesic distance between two sets of angles on a unit sphere
 
-#     Args:
-#         angles_a: First set of solid angles
-#         angles_b: Second set of solid angles
+    Args:
+        angles_a: First set of solid angles
+        angles_b: Second set of solid angles
 
-#     Returns:
-#         Cosine of the geodesic distance between the angles
+    Returns:
+        Cosine of the geodesic distance between the angles
 
-#     """
-#     angles_a = np.asarray(angles_a)
-#     angles_b = np.asarray(angles_b)
+    """
+    angles_a = np.asarray(angles_a)
+    angles_b = np.asarray(angles_b)
 
-#     cos_theta_a = np.cos(angles_a[..., 0])
-#     sin_theta_a = np.sin(angles_a[..., 0])
-#     cos_theta_b = np.cos(angles_b[..., 0])
-#     sin_theta_b = np.sin(angles_b[..., 0])
+    cos_theta_a = np.cos(angles_a[..., 0])
+    sin_theta_a = np.sin(angles_a[..., 0])
+    cos_theta_b = np.cos(angles_b[..., 0])
+    sin_theta_b = np.sin(angles_b[..., 0])
 
-#     delta_phi = angles_a[..., 1] - angles_b[..., 1]
-#     cos_delta_phi = np.cos(delta_phi)
+    delta_phi = angles_a[..., 1] - angles_b[..., 1]
+    cos_delta_phi = np.cos(delta_phi)
 
-#     cos_gamma = cos_theta_a * cos_theta_b + sin_theta_a * sin_theta_b * cos_delta_phi
-#     return np.clip(cos_gamma, -1.0, 1.0)
+    cos_gamma = cos_theta_a * cos_theta_b + sin_theta_a * sin_theta_b * cos_delta_phi
+    return np.clip(cos_gamma, -1.0, 1.0)
 
 
-# class HarmonicInterpolation:
-#     """Interpolation of functions with a localized Lagrange kernel based on spherical harmonics"""
+class MaternInterpolation:
+    """Sobolev-Matérn interpolation of functions"""
 
-#     def __init__(self, order: int, bandfilter: str = "Helmholtz"):
-#         """Initialize interpolating functions of a given order"""
-#         self._nodes, _ = SphericalHarmonic.quadrature(order)
+    def __init__(self, nodes: NDArray[np.floating], smoothness: float = 3.0, lmax: int | None = None):
+        """Initialize interpolation grid
 
-#         lmax = SphericalHarmonic.find_order(2 * order + 1)
-#         self._basis = [
-#             SphericalHarmonic((l, m)) for l in range(lmax + 1) for m in range(-l, l + 1)
-#         ]
-#         bandfunction = {
-#             "Helmholtz": lambda l: ((lmax + 1) ** 2 - l * (l+1)) ** -1,
-#             "Matern": lambda l: (1 + l * (l + 1)) ** -3
-#         }[bandfilter]
+        Smoothness parameter 3 should yield accurate second-order derivatives.
+        
+        Args:
+            nodes: Nodes of interpolation
+            smoothness: Smoothness of the interpolation
+            lmax: Order of kernel expansion defaults to the square root of the number of particles
+        """
+        self.lmax = np.sqrt(len(nodes)).astype(int) if lmax is None else lmax
+        basis = list(self.basis())
     
-#         self._bandfilter = np.array([bandfunction(l) for l in range(lmax + 1) for m in range(-l, l + 1)])
-#         self._values = np.array([sh(self._nodes) for sh in self._basis])
-#         self._theta = np.array([sh.partial_theta(self._nodes) for sh in self._basis])
+        self._bandfilter = np.array([(1 + l * (l + 1)) ** -(1 + smoothness) for l in range(self.lmax + 1) for m in range(-l, l + 1)])
+        self._values = np.array([sh(nodes) for sh in basis])
+        self._theta = np.array([sh.partial_theta(nodes) for sh in basis])
+        self._phi = np.array([sh.partial_phi(nodes) for sh in basis])
 
-#         matrix = np.einsum("y,yp,yq", self._bandfilter, self._values, self._values)
-#         # assert np.linalg.det(matrix) >= 1, "Singular interpolation matrix"
-#         # assert np.linalg.cond(matrix) < 1e5, "Ill-conditioned interpolation matrix"
-#         self._coefficients = np.linalg.pinv(matrix)
-
-#     def __getitem__(self, index):
-#         """Get Lagrange function"""
-
-#         def wrapper(angles: ArrayLike) -> NDArray[np.floating]:
-#             return np.einsum(
-#                 "y,q,yq,yp",
-#                 self._bandfilter,
-#                 self._coefficients[index],
-#                 self._values,
-#                 [sh(angles) for sh in self._basis],
-#             )
-
-#         return wrapper
-
-#     def __len__(self):
-#         """Return number of Lagrange kernels"""
-#         return len(self._nodes)
+        matrix = np.einsum("y,yp,yq", self._bandfilter, self._values, self._values)
+        self._coefficients = np.linalg.pinv(matrix)
     
-#     def partial_theta(self):
-#         """Return matrix form of the derivative operator with respect tho the polar angle"""
-#         return np.einsum(
-#             "pr,yq,yp",
-#             self._coefficients,
-#             self._values,
-#             self._theta,            
-#         )
+    def basis(self) -> Iterator[SphericalHarmonic]:
+        """Return generator of basis functions"""
+        for l in range(self.lmax + 1):
+            for m in range(-l, l + 1):
+                yield SphericalHarmonic((l, m))
+
+    def __getitem__(self, index):
+        """Get Lagrange function"""
+
+        def wrapper(angles: ArrayLike) -> NDArray[np.floating]:
+            return np.einsum(
+                "y,q,yq,yp",
+                self._bandfilter,
+                self._coefficients[index],
+                self._values,
+                [sh(angles) for sh in self.basis()],
+            )
+
+        return wrapper
+
+    def __len__(self):
+        """Return number of Lagrange kernels"""
+        return self._values.shape[1]
+    
+    def partial_theta(self):
+        """Return matrix form of the derivative operator with respect tho the polar angle"""
+        return np.einsum(
+            "y,yr,yq,pq->rp",
+            self._bandfilter,  # y
+            self._theta,       # y r
+            self._values,      # y q
+            self._coefficients # p q
+        )
+
+    def partial_phi(self):
+        """Return matrix form of the derivative operator with respect tho the polar angle"""
+        return np.einsum(
+            "y,yr,yq,pq->rp",
+            self._bandfilter,  # y
+            self._phi,       # y r
+            self._values,      # y q
+            self._coefficients # p q
+        )
+
+class LocalFiniteDifferences:
+    """Method of local finite differences"""
+    def __init__(self, shape: tuple[int, int]):
+        """Initialize interpolating functions of a given order"""
+        assert shape[0] >= 2 and shape[1] >= 4, "Shape must be at least (2, 4)"
+        self._shape = (int(shape[0]), int(shape[1]))
+        self._weights = np.pi * np.array([1, 2]) / np.array(shape)
+        self._thetas = (np.arange(shape[0], dtype=float) + 0.5) * self._weights[0]
+        self._phis = np.arange(shape[1], dtype=float) * self._weights[1]
+        self._nodes = np.array([
+            [theta, phi]
+            for theta in self._thetas for phi in self._phis
+        ])
+    
+    def partial_theta(self):
+        """Derivative operator with respect to the polar angle"""
+        def element(row, col):
+            if row[1] != col[1]:
+                return 0.0
+            
+            if row[0] == 0:
+                if col[0] == row[0]:
+                    return -1.0
+                elif col[0] == row[0] + 1:
+                    return 1.0
+            elif row[0] == self._shape[0] - 1:
+                if col[0] == row[0]:
+                    return 1.0
+                elif col[0] == row[0] - 1:
+                    return -1.0
+            elif row[0] == col[0] + 1:
+                return 0.5
+            elif row[0] == col[0] - 1:
+                return -0.5
+
+            return 0.0
+                          
+        return np.array([
+            [
+                element(row, col) for col in product(range(self._shape[0]), range(self._shape[1]))
+            ] for row in product(range(self._shape[0]), range(self._shape[1]))
+        ]) / self._weights[0]
+     
