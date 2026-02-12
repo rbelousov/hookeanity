@@ -225,26 +225,57 @@ class MaternInterpolation:
         """Return number of Lagrange kernels"""
         return self._values.shape[1]
 
+    def chi(self):
+        """Return values of the cardinal functions at the interpolation nodes"""
+        return np.array(
+            [
+                [1 / np.sqrt(wp) if p == q else 0.0 for q in range(len(self._weights))]
+                for p, wp in enumerate(self._weights)
+            ]
+        )
+
+    def chi_theta(self):
+        """Return derivatives of the cardinal functions with respect to theta at the interpolation nodes"""
+        return np.einsum(
+            "r,rp,y,yp,yq->rq",
+            1 / np.sqrt(self._weights),  # r
+            self._coefficients,  # rp
+            self._bandfilter,  # y
+            self._values,  # yp
+            self._theta,  # yq
+        )
+
+    def chi_phi(self):
+        """Return derivatives of the cardinal functions with respect to phi at the interpolation nodes"""
+        return np.einsum(
+            "r,rp,y,yp,yq->rq",
+            1 / np.sqrt(self._weights),  # r
+            self._coefficients,  # rp
+            self._bandfilter,  # y
+            self._values,  # yp
+            self._phi,  # yq
+        )
+
     def partial_theta(self):
         """Return matrix form of the derivative operator with respect tho the polar angle"""
+        chi = self.chi()
+        chi_theta = self.chi_theta()
         return np.einsum(
-            "y,yr,yq,pq,p->rp",
-            self._bandfilter,  # y
-            self._theta,  # y r
-            self._values,  # y q
-            self._coefficients,  # p q
-            1 / np.sqrt(self._weights),
+            "q,pq,rq",
+            self._weights,  # q,
+            chi,  # pq
+            chi_theta,  # rq
         )
 
     def partial_phi(self):
-        """Return matrix form of the derivative operator with respect tho the polar angle"""
+        """Return matrix form of the derivative operator with respect tho the azimuthal angle"""
+        chi = self.chi()
+        chi_phi = self.chi_phi()
         return np.einsum(
-            "y,yr,yq,pq,p->rp",
-            self._bandfilter,  # y
-            self._phi,  # y r
-            self._values,  # y q
-            self._coefficients,  # p q
-            1 / np.sqrt(self._weights),
+            "q,pq,rq",
+            self._weights,  # q,
+            chi,  # pq
+            chi_phi,  # rq
         )
 
 

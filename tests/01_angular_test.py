@@ -395,17 +395,23 @@ def test_matern_interpolation():
     oper_phi = inter.partial_phi()
     rng = np.random.default_rng(seed=0)
     npoints = 10
+    chi = inter.chi()
     for l, m in [(0, 0), (1, 0), (1, 1), (1, -1), (2, 0), (2, 1), (2, 2)]:
-        sh = SphericalHarmonic((l, m))
-        val = np.sqrt(weights) * sh(nodes)
-        dth = sh.partial_theta(nodes)
-        dph = sh.partial_phi(nodes)
-        sh_theta = oper_theta @ val
-        sh_phi = oper_phi @ val
         points = rng.choice(list(range(len(nodes))), size=npoints, replace=False)
+
+        sh = SphericalHarmonic((l, m))
+        val = np.einsum("q,pq,q->p", weights, chi, sh(nodes))
+        expected = np.sqrt(weights) * sh(nodes)
+        assert val[points] == pytest.approx(expected[points])
+
+        dth = np.sqrt(weights) * sh.partial_theta(nodes)
+        sh_theta = oper_theta @ val
         assert sh_theta[points] == pytest.approx(dth[points], abs=precision), (
             f"Incorrect derivative at order {(l, m)}"
         )
+
+        dph = np.sqrt(weights) * sh.partial_phi(nodes)
+        sh_phi = oper_phi @ val
         assert sh_phi[points] == pytest.approx(dph[points], abs=precision), (
             f"Incorrect derivative at order {(l, m)}"
         )

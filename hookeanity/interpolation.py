@@ -10,6 +10,7 @@ from .angular import SphericalHarmonic, MaternInterpolation
 
 Float: TypeAlias = float | np.floating
 ScalarValues: TypeAlias = NDArray[np.floating]
+ScalarFunction: TypeAlias = Callable[[Float, Float, Float], Float]
 
 
 class Interpolation:
@@ -43,14 +44,14 @@ class Interpolation:
             theta, phi = pnt[1]
             yield np.array([r, theta, phi])
 
-    def points_and_weights(self) -> Iterator[tuple[NDArray[np.floating], np.floating]]:
-        """Return generator of quadrature points and weights"""
-        points = product(self._radii, self._angles)
-        weights = product(self._rws, self._aws)
-        for pnt, wgt in zip(points, weights):
-            r = pnt[0]
-            theta, phi = pnt[1]
-            yield np.array([r, theta, phi]), wgt[0] * wgt[1]
+    # def points_and_weights(self) -> Iterator[tuple[NDArray[np.floating], np.floating]]:
+    #     """Return generator of quadrature points and weights"""
+    #     points = product(self._radii, self._angles)
+    #     weights = product(self._rws, self._aws)
+    #     for pnt, wgt in zip(points, weights):
+    #         r = pnt[0]
+    #         theta, phi = pnt[1]
+    #         yield np.array([r, theta, phi]), wgt[0] * wgt[1]
 
     # @staticmethod
     # def basis_function(
@@ -69,31 +70,33 @@ class Interpolation:
     #         yield self.basis_function(poly, sph)
 
     def transform(self) -> NDArray[np.floating]:
-        """Return matrix that transforms sampled values to expansion coefficients"""
+        """Return matrix that transforms `ScalarValues` to expansion coefficients"""
         polys = np.array([p(self._radii) for p in self._radial_functions])
 
         return np.array(
             [
                 [
-                    wn * wp * poly([rn])[0] * (1 if q == p else 0) / np.sqrt(wq)
-                    for wn, rn in zip(self._rws, self._radii)
+                    wn * wp * polys[k][n] * (1 if q == p else 0) / np.sqrt(wq)
+                    for n, wn in enumerate(self._rws)
                     for p, wp in enumerate(self._aws)
                 ]
-                for poly in self._radial_functions
+                for k in range(polys.shape[0])
                 for q, wq in enumerate(self._aws)
             ]
         )
 
     def inverse(self) -> NDArray[np.floating]:
         """Return matrix that transforms expansion coefficients into `ScalarValues`"""
+        polys = np.array([p(self._radii) for p in self._radial_functions])
+
         return np.array(
             [
                 [
-                    pk([rn])[0] * (1 if p == q else 0) / np.sqrt(wq)
-                    for pk in self._radial_functions
-                    for q, wq in enumerate(self._angles)
+                    polys[k][n] * (1 if p == q else 0) / np.sqrt(wq)
+                    for k in range(len(self._radial_functions))
+                    for q, wq in enumerate(self._aws)
                 ]
-                for rn in self._radii
+                for n in range(polys.shape[1])
                 for p in range(len(self._angles))
             ]
         )
@@ -102,33 +105,33 @@ class Interpolation:
         """Return matrix form of the partial-derivative operator with respect to the radial component"""
         poly = np.array([p(self._radii) for p in self._radial_functions])
         poly_r = np.array([p(self._radii, True) for p in self._radial_functions])
-        sph = np.array([s(self._angles) for s in self._angular_functions])
-        return np.array(
+        chi = np.array(
             [
-                [
-                    np.einsum("a,b,a,b,a,b", p1, s1, p2, s2, self._rws, self._aws)
-                    for p2, s2 in product(poly_r, sph)
-                ]
-                for p1, s1 in product(poly, sph)
+                [1 / np.sqrt(wq) if q == p else 0 for p in range(self._angles.shape[0])]
+                for q, wq in enumerate(self._aws)
             ]
         )
+
+        sz = self.npoints
+        return np.einsum(
+            "n,p,kn,qp,ln,rp->kqlr", self._rws, self._aws, poly, chi, poly_r, chi
+        ).reshape((sz, sz))
 
     def partial_theta(self) -> NDArray[np.floating]:
         """Return matrix form of the partial-derivative operator with respect to the polar component"""
         poly = np.array([p(self._radii) for p in self._radial_functions])
-        sph = np.array([s(self._angles) for s in self._angular_functions])
-        sph_theta = np.array(
-            [s.partial_theta(self._angles) for s in self._angular_functions]
-        )
-        return np.array(
+        chi = np.array(
             [
-                [
-                    np.einsum("a,b,a,b,a,b", p1, s1, p2, s2, self._rws, self._aws)
-                    for p2, s2 in product(poly, sph_theta)
-                ]
-                for p1, s1 in product(poly, sph)
+                [1 / np.sqrt(wq) if q == p else 0 for p in range(self._angles.shape[0])]
+                for q, wq in enumerate(self._aws)
             ]
         )
+        chi_theta = self._matern.chi_theta()
+
+        sz = self.npoints
+        return np.einsum(
+            "n,q,kn,pq,ln,rq->kplr", self._rws, self._aws, poly, chi, poly, chi_theta
+        ).reshape((sz, sz))
 
     def partial_phi(self) -> NDArray[np.floating]:
         """Return matrix form of the partial-derivative operator with respect to the azimuthal component"""
@@ -156,3 +159,7 @@ class Interpolation:
     def npoints(self) -> int:
         """Return number of quadrature points"""
         return len(self._radii) * len(self._angles)
+
+    def sample_scalar(self, scalar: ScalarFunction) -> ScalarValues:
+        """Sample scalar function at the quadrature points"""
+        return np.array([scalar(*p) for p in self.points()])
