@@ -229,7 +229,7 @@ class MaternInterpolation:
         """Return values of the cardinal functions at the interpolation nodes"""
         return np.array(
             [
-                [1 / np.sqrt(wp) if p == q else 0.0 for q in range(len(self._weights))]
+                [1 / np.sqrt(abs(wp)) if p == q else 0.0 for q in range(len(self._weights))]
                 for p, wp in enumerate(self._weights)
             ]
         )
@@ -238,7 +238,7 @@ class MaternInterpolation:
         """Return derivatives of the cardinal functions with respect to theta at the interpolation nodes"""
         return np.einsum(
             "r,rp,y,yp,yq->rq",
-            1 / np.sqrt(self._weights),  # r
+            1 / np.sqrt(abs(self._weights)),  # r
             self._coefficients,  # rp
             self._bandfilter,  # y
             self._values,  # yp
@@ -249,7 +249,7 @@ class MaternInterpolation:
         """Return derivatives of the cardinal functions with respect to phi at the interpolation nodes"""
         return np.einsum(
             "r,rp,y,yp,yq->rq",
-            1 / np.sqrt(self._weights),  # r
+            1 / np.sqrt(abs(self._weights)),  # r
             self._coefficients,  # rp
             self._bandfilter,  # y
             self._values,  # yp
