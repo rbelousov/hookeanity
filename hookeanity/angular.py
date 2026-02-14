@@ -182,9 +182,10 @@ class MaternInterpolation:
         self.lmax = np.sqrt(len(nodes)).astype(int) if lmax is None else lmax
         basis = list(self.basis())
 
+        spread = 4 * np.pi / len(nodes)
         self._bandfilter = np.array(
             [
-                (1 + l * (l + 1)) ** -(1 + smoothness)
+                (1 + l * (l + 1) * spread) ** -(1 + smoothness)
                 for l in range(self.lmax + 1)
                 for m in range(-l, l + 1)
             ]
@@ -195,7 +196,7 @@ class MaternInterpolation:
         self._weights = (
             np.ones(len(nodes), dtype=float)
             if weights is None
-            else np.asarray(weights, dtype=float)
+            else np.array(weights, dtype=float)
         )
 
         matrix = np.einsum("y,yp,yq", self._bandfilter, self._values, self._values)

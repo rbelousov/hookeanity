@@ -13,28 +13,26 @@ ScalarValues: TypeAlias = NDArray[np.floating]
 ScalarFunction: TypeAlias = Callable[[Float, Float, Float], Float]
 
 
-def fibonacci_sphere_thetaphi(n):
-    """
-    Fibonacci (golden-angle) points on the unit sphere, avoiding poles.
+def fibonacci_points(n: int) -> NDArray[np.floating]:
+    """Distribute Fibonacci golden-angle points on a unit sphere avoiding poles
 
-    Returns
-    -------
-    theta : (n,) ndarray
-        Colatitude in (0, pi)  (theta=0/pi excluded)
-    phi   : (n,) ndarray
-        Longitude in [0, 2*pi)
+    Args:
+        n: Number of points
+    
+    Returns:
+        A grid of nearly uniform points
     """
     k = np.arange(n)
 
     # Golden angle
-    gr = (1 + np.sqrt(5.0)) / 2.0
-    golden_angle = 2.0 * np.pi / (gr * gr)
+    gr = (1 + np.sqrt(5)) / 2
+    golden_angle = 2 * np.pi / (gr * gr)
 
-    # Midpoint z-spacing => avoids z = ±1 => theta != 0, pi
-    z = 1.0 - (2.0*k + 1.0)/n  # in (-1 + 1/n, 1 - 1/n)
+    # Midpoint z-spacing avoiding poles
+    z = 1.0 - (2.0 * k + 1.0) / n
 
-    theta = np.arccos(z)       # in (0, pi)
-    phi = ((k + 0.5) * golden_angle) % (2.0 * np.pi)
+    theta = np.arccos(z) # in (0, pi)
+    phi = ((k + 0.5) * golden_angle) % (2 * np.pi)
 
     return np.column_stack([theta, phi])
 
@@ -88,7 +86,7 @@ def reduced_gauss_legendre_grid_angles(N, min_lon=8):
 class Interpolation:
     """Expansion of a scalar-valued function in spherical coordinates"""
 
-    def __init__(self, order: tuple[int, int], basis: None | tuple[int, int] = None, lmax: int | None = None):
+    def __init__(self, order: tuple[int, int], lmax: int | None = None):
         """Initialize expansion of a given order
 
         Args:
@@ -97,13 +95,13 @@ class Interpolation:
 
         """
         self._radii, self._rws = RadialPolynomial.quadrature(order[0])
-        self._angles = fibonacci_sphere_thetaphi(order[1]) # SphericalHarmonic.quadrature(order[1])
+        self._angles = fibonacci_points(order[1]) # SphericalHarmonic.quadrature(order[1])
         # print('\nangles:\n', self._angles)
-        self._aws = np.ones(self._angles.shape[0])
+        self._aws = np.full(self._angles.shape[0], 4 * np.pi / order[1])
 
         self._radial_functions = [
             RadialPolynomial(n)
-            for n in range(order[0] + 1 if basis is None else basis[0])
+            for n in range(order[0] + 1)
         ]
         # self._angular_functions = [
         #     SphericalHarmonic((l, m))
@@ -111,7 +109,7 @@ class Interpolation:
         #     for m in range(-l, l + 1)
         # ]
         # print('\n\nangular weights:\n', self._aws)
-        self._matern = MaternInterpolation(self._angles, lmax=lmax)
+        self._matern = MaternInterpolation(self._angles, weights=self._aws, lmax=lmax)
 
         self._radial_values = np.array(
             [poly(self._radii) for poly in self._radial_functions]
@@ -121,7 +119,7 @@ class Interpolation:
         self._bfs = np.einsum(
             "pr,sa->psra", self._radial_values, self._angular_values
         ).reshape(self.npoints, self.npoints)
-        self._wts = (self._rws[:, None] * np.ones_like(self._aws)[None, :]).ravel()
+        self._wts = (self._rws[:, None] * self._aws[None, :]).ravel()
 
     def points(self) -> Iterator[NDArray[np.floating]]:
         """Return generator of quadrature points"""

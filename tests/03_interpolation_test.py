@@ -3,7 +3,25 @@
 import pytest
 import numpy as np
 import scipy as sp
-from hookeanity.interpolation import ScalarFunction, Interpolation
+from hookeanity.angular import SphericalHarmonic
+from hookeanity.interpolation import ScalarFunction, Interpolation, fibonacci_points
+
+def test_fibonacci():
+    """Test fibanacci quadrature"""
+
+    nodes = fibonacci_points(100)
+    weight = 4 * np.pi / nodes.shape[0]
+
+    basis = [
+        SphericalHarmonic((ell, m)) for ell in range(7) for m in range(-ell, ell + 1)
+    ]
+    for i, fi in enumerate(basis):
+        for j, fj in enumerate(basis):
+            value = weight * np.sum(fi(nodes) * fj(nodes))
+            if i == j:
+                assert value == pytest.approx(1, abs=1e-1), f"{{{(i, j)}}}"
+            else:
+                assert value == pytest.approx(0, abs=1e-1), f"{{{(i, j)}}}"
 
 
 @pytest.fixture
