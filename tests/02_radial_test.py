@@ -3,6 +3,7 @@
 import pytest
 import numpy as np
 from scipy.special import eval_jacobi
+from hookeanity.base import is_real
 from hookeanity.radial import jacobi_radau_quadrature, RadialPolynomial
 
 
@@ -47,6 +48,8 @@ def test_radial_polynomial():
             else:
                 assert value == pytest.approx(0), f"{{{(m, n)}}}"
 
+    assert is_real(basis[2](nodes[1]))
+
 
 def test_derivative():
     """Test evaluation of the derivative of the radial polynomial"""
@@ -63,3 +66,5 @@ def test_derivative():
         ]
     )
     assert vals == pytest.approx(poly.deriv()(nodes))
+
+    assert is_real(basis[2](nodes[1], derivative=True))

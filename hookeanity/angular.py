@@ -1,16 +1,18 @@
 """Real spherical harmonics for the solid-angle components of spherical reference frame"""
 
 import numpy as np
+from typing import cast
 from collections.abc import Iterator
 from itertools import product
 from numpy.typing import NDArray, ArrayLike
 from scipy.special import sph_legendre_p
 from pylebedev import PyLebedev
+from .base import Real, is_real
 
 
 def fourier(
     order: int, phi: ArrayLike, derivative: bool = False
-) -> NDArray[np.floating]:
+) -> NDArray[np.floating] | Real:
     """Evaluate real Fourier function of a given order
 
     Args:
@@ -24,20 +26,26 @@ def fourier(
     """
     if order == 0:
         return (
-            np.zeros_like(phi, dtype=float)
+            (0.0 if is_real(phi) else np.zeros_like(phi, dtype=float))
             if derivative
-            else np.ones_like(phi, dtype=float)
+            else (1.0 if is_real(phi) else np.ones_like(phi, dtype=float))
         )
 
-    phi = np.asarray(phi)
+    if not is_real(phi):
+        phi = np.asarray(phi)
+
     prefactor = np.sqrt(2)
     if derivative:
         order = -order
         prefactor *= order
 
     if order < 0:
-        return prefactor * np.sin(-order * phi) * (1 if order % 2 == 0 else -1)
-    return prefactor * np.cos(order * phi) * (1 if order % 2 == 0 else -1)
+        return (
+            prefactor
+            * np.sin(-order * cast(float, phi))
+            * (1 if order % 2 == 0 else -1)
+        )
+    return prefactor * np.cos(order * cast(float, phi)) * (1 if order % 2 == 0 else -1)
 
 
 class SphericalHarmonic:
@@ -56,11 +64,11 @@ class SphericalHarmonic:
 
         """
         assert abs(order[1]) <= order[0], (
-            f"Azimuthal-angle order ({order[1]}) exceeds the polar order ({order[0]})"
+            f"Polar order ({order[1]}) exceeds the azimuthatl order ({order[0]})"
         )
         self._order = order
 
-    def __call__(self, grid: ArrayLike) -> NDArray[np.floating]:
+    def __call__(self, grid: ArrayLike) -> NDArray[np.floating] | np.floating:
         """Return values of the spherical harmonic on a grid
 
         Args:
@@ -71,10 +79,10 @@ class SphericalHarmonic:
 
         """
         grid = np.asarray(grid)
-        return (
-            sph_legendre_p(self._order[0], abs(self._order[1]), grid[..., 0])
-            * fourier(self._order[1], grid[..., 1])
-        ).reshape(-1)
+        result = sph_legendre_p(
+            self._order[0], abs(self._order[1]), grid[..., 0]
+        ) * fourier(self._order[1], grid[..., 1])
+        return result.reshape(-1) if grid.ndim > 1 else result[0]
 
     def partial_theta(self, grid: ArrayLike) -> NDArray[np.floating]:
         """Return the derivative with respect to the polar angle"""
@@ -211,7 +219,16 @@ class MaternInterpolation:
     def __getitem__(self, index):
         """Get Lagrange function"""
 
-        def wrapper(angles: ArrayLike) -> NDArray[np.floating]:
+        def wrapper(angles: ArrayLike | Real) -> NDArray[np.floating] | np.floating:
+            if is_real(angles):
+                return np.einsum(
+                    "y,q,yq,y",
+                    self._bandfilter,
+                    self._coefficients[index],
+                    self._values,
+                    [sh(angles) for sh in self.basis()],
+                ) / np.sqrt(self._weights[index])
+
             return np.einsum(
                 "y,q,yq,yp",
                 self._bandfilter,
@@ -226,11 +243,14 @@ class MaternInterpolation:
         """Return number of Lagrange kernels"""
         return self._values.shape[1]
 
-    def chi(self):
+    def chi(self, points: ArrayLike | Real | None = None):
         """Return values of the cardinal functions at the interpolation nodes"""
         return np.array(
             [
-                [1 / np.sqrt(abs(wp)) if p == q else 0.0 for q in range(len(self._weights))]
+                [
+                    1 / np.sqrt(abs(wp)) if p == q else 0.0
+                    for q in range(len(self._weights))
+                ]
                 for p, wp in enumerate(self._weights)
             ]
         )
@@ -277,56 +297,4 @@ class MaternInterpolation:
             self._weights,  # q,
             chi,  # pq
             chi_phi,  # rq
-        )
-
-
-class LocalFiniteDifferences:
-    """Method of local finite differences"""
-
-    def __init__(self, shape: tuple[int, int]):
-        """Initialize interpolating functions of a given order"""
-        assert shape[0] >= 2 and shape[1] >= 4, "Shape must be at least (2, 4)"
-        self._shape = (int(shape[0]), int(shape[1]))
-        self._weights = np.pi * np.array([1, 2]) / np.array(shape)
-        self._thetas = (np.arange(shape[0], dtype=float) + 0.5) * self._weights[0]
-        self._phis = np.arange(shape[1], dtype=float) * self._weights[1]
-        self._nodes = np.array(
-            [[theta, phi] for theta in self._thetas for phi in self._phis]
-        )
-
-    def partial_theta(self):
-        """Return derivative operator with respect to the polar angle"""
-
-        def element(row, col):
-            if row[1] != col[1]:
-                return 0.0
-
-            if row[0] == 0:
-                if col[0] == row[0]:
-                    return -1.0
-                elif col[0] == row[0] + 1:
-                    return 1.0
-            elif row[0] == self._shape[0] - 1:
-                if col[0] == row[0]:
-                    return 1.0
-                elif col[0] == row[0] - 1:
-                    return -1.0
-            elif row[0] == col[0] + 1:
-                return 0.5
-            elif row[0] == col[0] - 1:
-                return -0.5
-
-            return 0.0
-
-        return (
-            np.array(
-                [
-                    [
-                        element(row, col)
-                        for col in product(range(self._shape[0]), range(self._shape[1]))
-                    ]
-                    for row in product(range(self._shape[0]), range(self._shape[1]))
-                ]
-            )
-            / self._weights[0]
         )

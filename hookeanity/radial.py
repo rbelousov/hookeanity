@@ -1,8 +1,10 @@
 """Transformed Jacobi polynomials for the radial component"""
 
+from typing import cast
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 from scipy.special import gamma, eval_jacobi, roots_jacobi
+from .base import Real, is_real
 
 
 def jacobi_radau_quadrature(
@@ -97,7 +99,9 @@ class RadialPolynomial:
         self._order = order
         self._prefactor = np.sqrt(2 * order + 3)
 
-    def __call__(self, r: ArrayLike, derivative: bool = False) -> NDArray[np.floating]:
+    def __call__(
+        self, r: ArrayLike | Real, derivative: bool = False
+    ) -> NDArray[np.floating] | Real:
         """Evaluate the radial polynomial
 
         Args:
@@ -109,9 +113,14 @@ class RadialPolynomial:
 
         """
         if self._order == 0:
-            return np.zeros_like(r) if derivative else np.full_like(r, self._prefactor)
-
-        x = 2 * np.asarray(r) - 1
+            return (
+                (0.0 if is_real(r) else np.zeros_like(r))
+                if derivative
+                else (
+                    self._prefactor if is_real(r) else np.full_like(r, self._prefactor)
+                )
+            )
+        x = 2 * cast(float, r) - 1 if is_real(r) else 2 * np.asarray(r) - 1
         if derivative:
             return (
                 self._prefactor

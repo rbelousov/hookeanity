@@ -15,14 +15,14 @@ readme = "README.md"
 requires-python = ">=3.13"
 
 dependencies = [
-    "numpy", "scipy", "pylebedev",
+    "numpy", "scipy", "pylebedev", "jaxtyping",
     # "jax", "optax", "flax", "jaxopt",
     # "matplotlib", "jupyterlab", "ipywidgets",
     # "uncertainties"
 ]
 
 [project.optional-dependencies]
-tests = ["pytest", "ruff"]
+tests = ["pytest"]
 dev = ["pytest", "ruff", "pyright"]
 
 [tool.setuptools]

@@ -1,10 +1,12 @@
 """Test `hookeanity.angular` module"""
 
 import pytest
+from typing import cast
 import numpy as np
 from scipy.special import sph_legendre_p, legendre
+from hookeanity.base import is_real
 from hookeanity.angular import fourier, SphericalHarmonic, geodesic_cos
-from hookeanity.angular import MaternInterpolation, LocalFiniteDifferences
+from hookeanity.angular import MaternInterpolation
 
 
 def test_fourier():
@@ -19,6 +21,11 @@ def test_fourier():
     assert fourier(-2, phis, derivative=True) == pytest.approx(
         2 * np.sqrt(2) * np.cos(2 * phis)
     )
+
+    phi = 2
+    one = fourier(2, phi)
+    assert is_real(one)
+    assert one == pytest.approx(np.sqrt(2) * np.cos(2 * phi))
 
 
 def test_spherical_legendre_p():
@@ -232,7 +239,7 @@ def test_spherical_legendre_p():
             )
 
             sph = SphericalHarmonic((l, m))
-            ff = fourier(m, [phi])[0]
+            ff = fourier(m, phi)
             assert sph(angles) == pytest.approx(
                 ff * np.array(vals[l, abs(m)]), abs=5e-6
             ), f"Value mismatched at order {(l, m)}"
@@ -247,9 +254,14 @@ def test_spherical_harmonic():
     grid = np.array(
         [[np.pi / 6, np.pi / 3], [np.pi / 3, np.pi / 6], [np.pi / 33, np.pi / 7]]
     )
-    values = sph(grid)
+    values = cast(np.ndarray, sph(grid))
     assert len(values) == 3
     assert values.tolist() == pytest.approx([-0.191622, 0.0, 0.000336779], abs=1e-6)
+
+    omega = [np.pi / 6, np.pi / 3]
+    value = sph(omega)
+    assert is_real(value)
+    assert value == pytest.approx(-0.191622, abs=1e-6)
 
     nodes, weights = SphericalHarmonic.quadrature(7)
     basis = [
@@ -380,7 +392,7 @@ def test_matern_interpolation():
     precision = 2e-1
     sz = len(inter)
     for p in range(sz):
-        lp = inter[p](nodes)
+        lp = cast(np.ndarray, inter[p](nodes))
         assert np.sum(lp) == pytest.approx(np.sqrt(weights[p]) ** -1, abs=precision)
         assert lp[p] == pytest.approx(np.sqrt(weights[p]) ** -1, abs=precision)
         for q in range(sz):
@@ -415,20 +427,3 @@ def test_matern_interpolation():
         assert sh_phi[points] == pytest.approx(dph[points], abs=precision), (
             f"Incorrect derivative at order {(l, m)}"
         )
-
-
-# def test_finite_differences():
-#     """Test `LocalFiniteDifferences"""
-#     scheme = LocalFiniteDifferences((20, 5))
-#     rng = np.random.default_rng(seed=0)
-#     npoints = 8
-
-#     precision = 1e-3
-#     oper_theta = scheme.partial_theta()
-#     for l, m in [(0, 0), (1, 0), (1, 1), (1, -1), (2, 0), (2, 1), (2, 2)]:
-#         sh = SphericalHarmonic((l, m))
-#         val = sh(scheme._nodes)
-#         dth = sh.partial_theta(scheme._nodes)
-#         sh_theta = oper_theta @ val
-#         points = rng.choice(list(range(len(scheme._nodes))), size=npoints, replace=False)
-#         assert sh_theta[points] == pytest.approx(dth[points], abs=precision), f"Incorrect derivative at order {(l, m)}"
