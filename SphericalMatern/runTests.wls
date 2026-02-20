@@ -1,10 +1,9 @@
-repoDir = Directory[];
+(* Run paclet tests *)
+repoDir = DirectoryName @ $InputFileName;
+PacletDirectoryLoad @ DirectoryName[repoDir];
 testDir = FileNameJoin[{repoDir, "Tests"}];
-
-PacletDirectoryLoad[repoDir]
 report = TestReport[FileNames["*.wl", testDir]];
 
-(* Extract summary information *)
 passed   = report["TestsSucceededCount"];
 failed   = report["TestsFailedCount"];
 skipped  = report["TestsNotEvaluatedCount"];

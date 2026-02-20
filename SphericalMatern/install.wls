@@ -1,8 +1,7 @@
-(* install.wls *)
+(* Install paclet *)
+
 Needs["PacletTools`"];
-
 pacletDir = DirectoryName[$InputFileName];
-
 buildResult = PacletBuild[pacletDir];
 
 If[Head[buildResult] =!= Success,
