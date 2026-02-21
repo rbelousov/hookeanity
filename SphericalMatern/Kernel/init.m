@@ -14,8 +14,7 @@ FibonacciPoints::usage =
 "FibonacciPoints[n] spreads n > 0 points (\[Theta], \[Phi]) nearly uniformly over the spherical surface \
 avoiding the northern and southern poles."
 
-FibonacciPoints::arg =
-"Expected n to be a positive integer.";
+FibonacciPoints::arg = "Expected n to be a positive integer.";
 
 MaternInterpolation::usage =
 "MaternInterpolation[angles, values] constructs a Matérn-type spherical kernel interpolant \
@@ -25,10 +24,15 @@ from samples at spherical angles.\n\n\
 The result is a function f[θ, ϕ] that evaluates the interpolant.\n\n\
 MaternInterpolation[angles, values, smoothness] uses the given smoothness parameter (default 3).";
 
+MaternKernel::usage =
+"MaternKernel[{θ, ϕ}, order, smoothness] constructs a Matérn-type spherical kernel function \
+centered at the given solid angle {θ, ϕ} with a specified order > 0 and smoothness (default 3).";
+MaternKernel::arg = "Expected numeric {θ, ϕ} and positive integer order.";
+MaternKernel::smooth = "Expected smoothness to be a positive number.";
+
 MaternInterpolation::arg =
 "Expected angles to be a nonempty list of {θ, ϕ} pairs and values to be a list of the same length.";
-
-MaternInterpolation::smooth = "Expected smoothness to be a positive number.";
+MaternInterpolation::smooth = MaternKernel::smooth;
 
 Begin["`Private`"];
 
@@ -80,6 +84,37 @@ FibonacciPoints[n_] /; !(IntegerQ[n] && n > 0) :=
 
 ValidSolidAnglesQ[angles_] := MatrixQ[angles, NumericQ] && Dimensions[angles][[2]] === 2;
 ValidScalarValuesQ[values_] := VectorQ[values, NumericQ];
+
+MaternKernel[{\[Theta]_, \[Phi]_}, order_, smoothness_: 3] := Module[
+  {grain, lmax, bandfilter},
+
+  If[!(NumericQ[\[Theta]] && NumericQ[\[Phi]] && IntegerQ[order] && order > 0),
+    Message[MaternKernel::arg];
+    Return[$Failed];
+  ];
+
+  If[!(NumericQ[smoothness] && smoothness >= 0),
+    Message[MaternKernel::smooth];
+    Return[$Failed];
+  ];
+
+  grain = 4 * Pi / order;
+  lmax = Floor @ Sqrt[order];
+  bandfilter = Table[
+    (1 + l * (l + 1) * grain) ^ -(1 + smoothness),
+    {l, 0, lmax}
+  ];
+
+  Function[{theta, phi},
+    Sum[
+      Times[
+        bandfilter[[l + 1]] * (2 * l + 1) / (4 * Pi),
+        LegendreP[l, Cos[\[Theta]] * Cos[theta] + Sin[\[Theta]] * Sin[theta] * Cos[\[Phi] - phi]]
+      ],
+      {l, 0, lmax}
+    ]
+  ]
+]
 
 MaternInterpolation[angles_, values_, smoothness_: 3] :=  Module[
   {sz, grain, lmax, cth, sth, phis, cph, geo, bandfilter, mtx, expansion},

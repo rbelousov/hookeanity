@@ -1,6 +1,7 @@
 (* Install paclet *)
-
 Needs["PacletTools`"];
+
+pacletName = "SphericalMatern";
 pacletDir = DirectoryName[$InputFileName];
 buildResult = PacletBuild[pacletDir];
 
@@ -10,16 +11,20 @@ If[Head[buildResult] =!= Success,
 ];
 
 pacletArchive = Lookup[buildResult[[2]], "PacletArchive", Missing["NoPacletArchive"]];
-
 If[pacletArchive === Missing["NoPacletArchive"] || !FileExistsQ[pacletArchive],
   Print["PacletBuild did not produce a paclet archive path. Result: ", buildResult];
   Exit[1];
 ];
 
-installResult = PacletInstall[pacletArchive];
+(* --- Uninstall previous versions if present --- *)
+existingPaclets = PacletFind[pacletName];
+If[existingPaclets =!= {},
+  Print["Existing installation(s) found. Uninstalling..."];
+  Scan[PacletUninstall, existingPaclets];
+];
 
+(* --- Install new version --- *)
+installResult = PacletInstall[pacletArchive];
 Print["Built: ", pacletArchive];
 Print["Installed: ", installResult];
-
-(* Optional sanity check *)
-Print["PacletFind: ", PacletFind["SphericalMatern"]];
+Print["PacletFind: ", PacletFind[pacletName]];
