@@ -19,19 +19,19 @@ FibonacciPoints::arg = "Expected n to be a positive integer.";
 MaternInterpolation::usage =
 "MaternInterpolation[angles, values] constructs a Matérn-type spherical kernel interpolant \
 from samples at spherical angles.\n\n\
-* angles is a list of {θ, ϕ} pairs (in radians).\n\
+* angles is a list of {\[Theta], \[Phi]} pairs (in radians).\n\
 * values is a list of the same length containing sample values.\n\
-The result is a function f[θ, ϕ] that evaluates the interpolant.\n\n\
+The result is a function f[\[Theta], \[Phi]] that evaluates the interpolant.\n\n\
 MaternInterpolation[angles, values, smoothness] uses the given smoothness parameter (default 3).";
 
 MaternKernel::usage =
-"MaternKernel[{θ, ϕ}, order, smoothness] constructs a Matérn-type spherical kernel function \
-centered at the given solid angle {θ, ϕ} with a specified order > 0 and smoothness (default 3).";
-MaternKernel::arg = "Expected numeric {θ, ϕ} and positive integer order.";
+"MaternKernel[{\[Theta], \[Phi]}, order, smoothness] constructs a Matérn-type spherical kernel function \
+centered at the given solid angle {\[Theta], \[Phi]} with a specified order > 0 and smoothness (default 3).";
+MaternKernel::arg = "Expected numeric {\[Theta], \[Phi]} and positive integer order.";
 MaternKernel::smooth = "Expected smoothness to be a positive number.";
 
 MaternInterpolation::arg =
-"Expected angles to be a nonempty list of {θ, ϕ} pairs and values to be a list of the same length.";
+"Expected angles to be a nonempty list of {\[Theta], \[Phi]} pairs and values to be a list of the same length.";
 MaternInterpolation::smooth = MaternKernel::smooth;
 
 Begin["`Private`"];

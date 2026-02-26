@@ -218,9 +218,18 @@ class MaternInterpolation:
 
     def __getitem__(self, index):
         """Get Lagrange function"""
-
-        def wrapper(angles: ArrayLike | Real) -> NDArray[np.floating] | np.floating:
-            if is_real(angles):
+        # def wrapper(angles: ArrayLike | Real) -> NDArray[np.floating] | np.floating:
+            # if is_real(angles):
+            #     return np.einsum(
+            #         "y,q,yq,y",
+            #         self._bandfilter,
+            #         self._coefficients[index],
+            #         self._values,
+            #         [sh(angles) for sh in self.basis()],
+            #     ) / np.sqrt(self._weights[index])
+            
+        def wrapper(angles: ArrayLike) -> NDArray[np.floating] | np.floating:
+            if np.asarray(angles).ndim == 1:
                 return np.einsum(
                     "y,q,yq,y",
                     self._bandfilter,
@@ -228,7 +237,7 @@ class MaternInterpolation:
                     self._values,
                     [sh(angles) for sh in self.basis()],
                 ) / np.sqrt(self._weights[index])
-
+            
             return np.einsum(
                 "y,q,yq,yp",
                 self._bandfilter,
@@ -238,22 +247,29 @@ class MaternInterpolation:
             ) / np.sqrt(self._weights[index])
 
         return wrapper
+    
+    def __iter__(self):
+        """Return Matern interpolators"""
+        return (self[i] for i in range(len(self)))
 
     def __len__(self):
         """Return number of Lagrange kernels"""
         return self._values.shape[1]
 
-    def chi(self, points: ArrayLike | Real | None = None):
+    def chi(self, grid: ArrayLike | Real | None = None):
         """Return values of the cardinal functions at the interpolation nodes"""
-        return np.array(
-            [
+        if grid is None:
+            return np.array(
                 [
-                    1 / np.sqrt(abs(wp)) if p == q else 0.0
-                    for q in range(len(self._weights))
+                    [
+                        1 / np.sqrt(abs(wp)) if p == q else 0.0
+                        for q in range(len(self._weights))
+                    ]
+                    for p, wp in enumerate(self._weights)
                 ]
-                for p, wp in enumerate(self._weights)
-            ]
-        )
+            )
+        
+        raise NotImplementedError("Not implemented yet.") 
 
     def chi_theta(self):
         """Return derivatives of the cardinal functions with respect to theta at the interpolation nodes"""

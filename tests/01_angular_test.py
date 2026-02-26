@@ -427,3 +427,6 @@ def test_matern_interpolation():
         assert sh_phi[points] == pytest.approx(dph[points], abs=precision), (
             f"Incorrect derivative at order {(l, m)}"
         )
+
+    #print('\ninter: ', inter.__len__(), sz)
+    #raise

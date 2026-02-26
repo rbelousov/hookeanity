@@ -23,6 +23,8 @@ def test_fibonacci():
             else:
                 assert value == pytest.approx(0, abs=1e-1), f"{{{(i, j)}}}"
 
+    assert len(nodes) == 100
+
 
 @pytest.fixture
 def scalar() -> ScalarFunction:
@@ -95,7 +97,7 @@ def test_partial_r(scalar, scalar_r):
 
 
 def test_partial_theta(scalar, scalar_theta):
-    """Test `Interpolation.partial_r`"""
+    """Test `Interpolation.partial_theta`"""
     inter = Interpolation((5, 5))
     values = inter.sample_function(scalar)
     modes = inter.transform() @ values
@@ -114,7 +116,7 @@ def test_partial_theta(scalar, scalar_theta):
 
 
 def test_partial_phi(scalar, scalar_phi):
-    """Test `Interpolation.partial_r`"""
+    """Test `Interpolation.partial_phi`"""
     inter = Interpolation((5, 5))
     values = inter.sample_function(scalar)
     modes = inter.transform() @ values

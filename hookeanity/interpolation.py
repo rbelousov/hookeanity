@@ -115,6 +115,7 @@ class Interpolation:
         # ]
         # print('\n\nangular weights:\n', self._aws)
         self._matern = MaternInterpolation(self._angles, weights=self._aws, lmax=lmax)
+        self._angular_functions = list(self._matern)
 
         self._radial_values = np.array(
             [poly(self._radii) for poly in self._radial_functions]
@@ -271,6 +272,41 @@ class Interpolation:
     def npoints(self) -> int:
         """Return number of quadrature points"""
         return len(self._radii) * len(self._angles)
+    
+    @property
+    def nradii(self) -> int:
+        """Return number of radial quadrature points"""
+        return len(self._radii)
+    
+    @property
+    def nangles(self) -> int:
+        """Return number of angular quadrature points"""
+        return len(self._angles)
+
+    @property
+    def bfs(self) -> NDArray[np.floating]:
+        """Return basis functions evaluated on the pseudospectral grid"""
+        return self._bfs
+    
+    @property
+    def weights(self) -> NDArray[np.floating]:
+        """Return integration weights"""
+        return (self._wts, self._rws, self._aws)
+    
+    @property
+    def radial_functions(self):
+        """Return radial functions"""
+        return self._radial_functions
+    
+    @property
+    def angular_functions(self):
+        """Return angular functions"""
+        return self._angular_functions
+    
+    # @property
+    # def radial_values(self) -> NDArray[np.floating]:
+    #     """Return values of radial basis functions evaluated on the pseudospectral grid"""
+    #     return self._radial_values
 
     def sample_function(self, scalar: Function) -> Values:
         """Sample scalar function at the quadrature points"""
@@ -302,6 +338,8 @@ class Interpolation:
         """
         return self.expand_scalar_values(self.sample_function(scalar))
 
-    def to_scalar_values(self, coefficients, point_indices=[]):
+    def to_scalar_values(self, coefficients: ArrayLike, point_indices: ArrayLike | None=None):
         """Return the values of the approximated function on the pseudo-spectral grid"""
-        return np.einsum("b,bp", coefficients, self._bfs[:, point_indices])
+        if point_indices is None:
+            return self._bfs.T @ coefficients
+        return self._bfs[:, point_indices].T @ coefficients # np.einsum("b,bp", coefficients, self._bfs[:, point_indices])
