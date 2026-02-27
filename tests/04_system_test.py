@@ -4,6 +4,7 @@ import pytest
 import numpy as np
 from hookeanity.system import System
 
+
 def test_initialization():
     """Test initialization"""
     lam = 1.0
@@ -36,6 +37,7 @@ def test_initialization():
     assert sys._radial_surface.shape == (order[0] + 1,)
     assert sys._radial_on_points.shape == (order[0] + 1, sys.npoints)
     assert sys._inverse_lhs.shape[0] == sys._inverse_lhs.shape[1]
+
 
 def test_dummy():
     """Test shapes after one step"""

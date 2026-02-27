@@ -272,12 +272,12 @@ class Interpolation:
     def npoints(self) -> int:
         """Return number of quadrature points"""
         return len(self._radii) * len(self._angles)
-    
+
     @property
     def nradii(self) -> int:
         """Return number of radial quadrature points"""
         return len(self._radii)
-    
+
     @property
     def nangles(self) -> int:
         """Return number of angular quadrature points"""
@@ -287,22 +287,22 @@ class Interpolation:
     def bfs(self) -> NDArray[np.floating]:
         """Return basis functions evaluated on the pseudospectral grid"""
         return self._bfs
-    
+
     @property
-    def weights(self) -> NDArray[np.floating]:
+    def weights(self) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
         """Return integration weights"""
         return (self._wts, self._rws, self._aws)
-    
+
     @property
     def radial_functions(self):
         """Return radial functions"""
         return self._radial_functions
-    
+
     @property
     def angular_functions(self):
         """Return angular functions"""
         return self._angular_functions
-    
+
     # @property
     # def radial_values(self) -> NDArray[np.floating]:
     #     """Return values of radial basis functions evaluated on the pseudospectral grid"""
@@ -338,8 +338,12 @@ class Interpolation:
         """
         return self.expand_scalar_values(self.sample_function(scalar))
 
-    def to_scalar_values(self, coefficients: ArrayLike, point_indices: ArrayLike | None=None):
+    def to_scalar_values(
+        self, coefficients: ArrayLike, point_indices: ArrayLike | None = None
+    ):
         """Return the values of the approximated function on the pseudo-spectral grid"""
         if point_indices is None:
             return self._bfs.T @ coefficients
-        return self._bfs[:, point_indices].T @ coefficients # np.einsum("b,bp", coefficients, self._bfs[:, point_indices])
+        return (
+            self._bfs[:, point_indices].T @ coefficients
+        )  # np.einsum("b,bp", coefficients, self._bfs[:, point_indices])

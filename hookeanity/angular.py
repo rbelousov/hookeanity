@@ -219,15 +219,15 @@ class MaternInterpolation:
     def __getitem__(self, index):
         """Get Lagrange function"""
         # def wrapper(angles: ArrayLike | Real) -> NDArray[np.floating] | np.floating:
-            # if is_real(angles):
-            #     return np.einsum(
-            #         "y,q,yq,y",
-            #         self._bandfilter,
-            #         self._coefficients[index],
-            #         self._values,
-            #         [sh(angles) for sh in self.basis()],
-            #     ) / np.sqrt(self._weights[index])
-            
+        # if is_real(angles):
+        #     return np.einsum(
+        #         "y,q,yq,y",
+        #         self._bandfilter,
+        #         self._coefficients[index],
+        #         self._values,
+        #         [sh(angles) for sh in self.basis()],
+        #     ) / np.sqrt(self._weights[index])
+
         def wrapper(angles: ArrayLike) -> NDArray[np.floating] | np.floating:
             if np.asarray(angles).ndim == 1:
                 return np.einsum(
@@ -237,7 +237,7 @@ class MaternInterpolation:
                     self._values,
                     [sh(angles) for sh in self.basis()],
                 ) / np.sqrt(self._weights[index])
-            
+
             return np.einsum(
                 "y,q,yq,yp",
                 self._bandfilter,
@@ -247,7 +247,7 @@ class MaternInterpolation:
             ) / np.sqrt(self._weights[index])
 
         return wrapper
-    
+
     def __iter__(self):
         """Return Matern interpolators"""
         return (self[i] for i in range(len(self)))
@@ -268,8 +268,8 @@ class MaternInterpolation:
                     for p, wp in enumerate(self._weights)
                 ]
             )
-        
-        raise NotImplementedError("Not implemented yet.") 
+
+        raise NotImplementedError("Not implemented yet.")
 
     def chi_theta(self):
         """Return derivatives of the cardinal functions with respect to theta at the interpolation nodes"""
