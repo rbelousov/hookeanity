@@ -15,7 +15,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 
 dependencies = [
-    "numpy", "scipy", "pylebedev", "jaxtyping",
+    "numpy", "scipy", "typeguard", "jaxtyping", "h5py"
     # "jax", "optax", "flax", "jaxopt",
     # "matplotlib", "jupyterlab", "ipywidgets",
     # "uncertainties"
@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 tests = ["pytest"]
-dev = ["pytest", "ruff", "pyright"]
+dev = ["pytest", "docformatter", "ruff", "pyright"]
 
 [tool.setuptools]
 packages = ["hookeanity"]
@@ -36,9 +36,16 @@ src = ["hookeanity", "tests"]
 include = ["**/*.py", "**/*.ipynb"]
 
 [tool.ruff.lint]
-select = ["D"]
+extend-select = ["D"]
 ignore = [
   "D203",  # no blank line before class docstring (keep D211)
   "D213",  # summary on first line (keep D212)
-  "D400", "D415", # Summary without period
+  "D400", "D413", "D415", # Summary without period
 ]
+
+[tool.docformatter]
+recursive = true
+in-place = true
+
+wrap-summaries = 88
+wrap-descriptions = 88

@@ -1,16 +1,53 @@
-"""Basis types"""
+"""Basic types.
 
+Attributes:
+    DIM (int): Number of spatial dimensions
+    TypeHint (typing.TypeVar): Type variable for hints
+    Real (typing.TypeAlias): Native python or numpy floating-point number
+    Point (typing.TypeAlias): Point coordinates
+    Grid (typing.TypeAlias): Grid of point coordinates
+    ScalarField (typing.TypeAlias): Scalar field defined over a grid
+    VectorField (typing.TypeAlias): Vector field defined over a grid
+    Field (typing.TypeAlias): Scalar or vector field defined over a grid
+    ScalarValues (typing.TypeAlias): Scalar values on a mesh
+    VectorValues (typing.TypeAlias): Vector values on a mesh
+"""
+
+from typing import Any, TypeAlias, TypeVar
+from typing_extensions import TypeForm, TypeIs
+from collections.abc import Callable
+from typeguard import check_type, TypeCheckError
 from jaxtyping import Float
-from typing import TypeAlias, Any
-from collections.abc import Callable, Sequence, Iterator
 import numpy as np
-from numpy.typing import NDArray, ArrayLike
+from numpy.typing import NDArray
 
+
+DIM = 3
+TypeHint = TypeVar("TypeHint")
 Real: TypeAlias = float | np.floating
-ScalarValues: TypeAlias = Float[NDArray[np.floating], "mesh"]
-VectorValues: TypeAlias = Float[NDArray[np.floating], "mesh coordinate"]
+Point: TypeAlias = Float[NDArray[np.floating], "coordinates"]  # noqa: F722, F821
+Grid: TypeAlias = Float[NDArray[np.floating], "points coordinates"]  # noqa: F722, F821
+ScalarValues: TypeAlias = Float[NDArray[np.floating], "points"]  # noqa: F722, F821
+VectorValues: TypeAlias = Float[NDArray[np.floating], "points components"]  # noqa: F722, F821
+ScalarField: TypeAlias = Callable[[Point | Grid], Real | ScalarValues]
+VectorField: TypeAlias = Callable[[Point | Grid], Point | VectorValues]
+Field: TypeAlias = ScalarField | VectorField
 
 
-def is_real(arg: Any) -> bool:
-    """Check if a variable is instances of `Real`"""
-    return isinstance(arg, (float, np.floating))
+def instance(arg: Any, hint: TypeForm[TypeHint] | Any) -> TypeIs[TypeHint]:
+    """Check if a variable is an instance of the given type hint.
+
+    Current implementation is restricted to acceptable type hints by `Type`.
+
+    Args:
+        arg: variable to check
+        hint: type hint to check against
+
+    Returns:
+        bool: True if arg is an instance of hint, False otherwise
+    """
+    try:
+        check_type(arg, hint)
+        return True
+    except TypeCheckError:
+        return False

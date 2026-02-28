@@ -1,9 +1,9 @@
-"""Test `hookeanity.radial` module"""
+"""Test `hookeanity.radial` module."""
 
 import pytest
 import numpy as np
 from scipy.special import eval_jacobi
-from hookeanity.base import is_real
+from hookeanity.base import Real, instance
 from hookeanity.radial import jacobi_radau_quadrature, RadialPolynomial
 
 
@@ -48,11 +48,11 @@ def test_radial_polynomial():
             else:
                 assert value == pytest.approx(0), f"{{{(m, n)}}}"
 
-    assert is_real(basis[2](nodes[1]))
+    assert instance(basis[2](nodes[1]), Real)
 
 
 def test_derivative():
-    """Test evaluation of the derivative of the radial polynomial"""
+    """Test evaluation of the derivative of the radial polynomial."""
     num = 5
     nodes, weights = RadialPolynomial.quadrature(num - 1)
     basis = [RadialPolynomial(order) for order in range(num)]
@@ -67,4 +67,4 @@ def test_derivative():
     )
     assert vals == pytest.approx(poly.deriv()(nodes))
 
-    assert is_real(basis[2](nodes[1], derivative=True))
+    assert instance(basis[2](nodes[1], derivative=True), Real)
