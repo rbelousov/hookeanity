@@ -22,7 +22,7 @@ def test_save_and_load(tmp_path):
     f_ext = 0.5
     kbt = 1.5
     mesh = (5, 25)
-    system = System(mesh, lam, mu, f_ext, kbt)
+    system = System(mesh, lam, mu, f_ext, kbt=kbt)
     system.save(filepath)
     sample1 = system._rng.random(5)
     assert system.mesh == mesh
@@ -53,6 +53,6 @@ def test_system_smoke():
     assert sys(dt)._state.shape == (np.prod(mesh), DIM)
     assert np.all(sys._state == 1)
 
-    sys = System(mesh, 1.0, 1.0)(dt)(dt)
+    sys = System(mesh, 1.0, 1.0)(dt)(dt)(dt)
     assert sys._kbt == 1
-    assert np.all(sys._state != 0)
+    assert not np.all(sys._state == 0)

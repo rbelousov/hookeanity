@@ -26,6 +26,7 @@ class System:
         lam: Real,
         mu: Real,
         f_ext: Real = 0.0,
+        f_loc: tuple[Real, Real] = (0.0, 0.0),
         kbt: Real = 1.0,
         state: VectorValues | None = None,
         rng: np.random.Generator | Seed | None = None,
@@ -37,6 +38,7 @@ class System:
             lam: Lamé's first parameter
             mu: Lamé's second parameter (shear modulus)
             f_ext: Magnitude of the external force defaults to zero
+            f_loc: Solid angle specifying the location of the external point source
             kbt: Effective temperature in units of energy defaults to one
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
@@ -44,6 +46,7 @@ class System:
         self._lam = lam
         self._mu = mu
         self._ext = f_ext
+        self._loc = f_loc
         self._kbt = kbt
         self._inter = Interpolation(mesh)
         self._state = (
@@ -58,14 +61,14 @@ class System:
         pk1 = np.array([poly(1.0) for poly in self._inter._radial_functions])
 
         sz = len(self._inter)
-        lhs = np.einsum(
+        self._lhs = np.einsum(
             "np,kqnp,mn,m->kqnp",
             self._inter._wts.reshape(mesh),  # np
             self._inter._bfs.reshape(2 * mesh),  # kqnp
             self._inter._radial_values,  # mn
             pk1,  # m
         ).reshape(sz, sz)
-        self._inverse_lhs = np.linalg.pinv(lhs)
+        self._inverse_lhs = np.linalg.pinv(self._lhs)
 
         transform = self._inter.transform()
         partial = np.asarray(
@@ -75,6 +78,11 @@ class System:
         self._laplacian = np.einsum("bqk,bkl,ln->qn", partial, partial, transform)
 
         self._std = np.sqrt(2 * self._kbt) * pk1
+
+        chis = np.array(
+            [chi(np.array(self._loc)) for chi in self._inter._angular_functions]
+        )
+        self._force = self._ext * np.einsum("k,p->kp", pk1, chis).ravel()
 
     def __len__(self):
         """Return number of grid points."""
@@ -121,6 +129,9 @@ class System:
         div_stress = (self._mu + self._lam) * np.einsum(
             "aqbn,nb->qa", self._grad_div, noc
         ) + self._mu * np.einsum("qn,na->qa", self._laplacian, noc)
+        # div_stress = (self._mu + self._lam) * np.einsum(
+        #     "aqbn,nb->qa", self._grad_div, self._state
+        # ) + self._mu * np.einsum("qn,na->qa", self._laplacian, self._state)
 
         # Fluctuations
         flu = np.einsum(
@@ -129,8 +140,11 @@ class System:
             self._rng.normal(size=(self.mesh[1], DIM)),
         ).reshape((len(self), DIM))
 
+        # div_stress[:, -1] -= self._force # NB! External force subtracted!
         rhs = flu - dt * div_stress
         delta = np.einsum("nq,qa->na", self._inverse_lhs, rhs)
+        # delta = np.linalg.solve(self._lhs, rhs)
+        # delta, *_ = np.linalg.lstsq(self._lhs, rhs, rcond=1e-6)
         self._state = self.state() + delta
         return self
 
@@ -156,6 +170,7 @@ class System:
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
             f.attrs["f_ext"] = float(self._ext)
+            f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["kT"] = float(self._kbt)
             f.attrs["rng_bit_generator"] = type(self._rng.bit_generator).__name__
             f.attrs["rng_state_json"] = json.dumps(
@@ -195,18 +210,27 @@ class System:
         def attr_float(f: h5py.File, key: str) -> float:
             return float(attr_any(f, key))
 
-        def attr_mesh2(f: h5py.File, key: str = "mesh") -> tuple[int, int]:
+        def attr_mesh(f: h5py.File) -> tuple[int, int]:
+            key = "mesh"
             arr = np.asarray(attr_any(f, key))
             if arr.shape != (2,):
                 raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
             return (int(arr[0]), int(arr[1]))
 
+        def attr_f_loc(f: h5py.File) -> tuple[float, float]:
+            key = "f_loc"
+            arr = np.asarray(attr_any(f, key))
+            if arr.shape != (2,):
+                raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
+            return (float(arr[0]), float(arr[1]))
+
         with h5py.File(filepath, "r") as f:
-            mesh = attr_mesh2(f)
+            mesh = attr_mesh(f)
 
             lam = attr_float(f, "lambda")
             mu = attr_float(f, "mu")
             f_ext = attr_float(f, "f_ext")
+            f_loc = attr_f_loc(f)
             kbt = attr_float(f, "kT")
 
             dset = cast(h5py.Dataset, f["state"])
@@ -225,5 +249,12 @@ class System:
             rng = np.random.Generator(bitgen)
 
             return cls(
-                mesh=mesh, lam=lam, mu=mu, f_ext=f_ext, kbt=kbt, state=state, rng=rng
+                mesh=mesh,
+                lam=lam,
+                mu=mu,
+                f_ext=f_ext,
+                f_loc=f_loc,
+                kbt=kbt,
+                state=state,
+                rng=rng,
             )
