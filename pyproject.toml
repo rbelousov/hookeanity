@@ -24,6 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 tests = ["pytest"]
 dev = ["pytest", "docformatter", "ruff", "pyright"]
+doc = ["mkdocs", "mkdocstrings[python]", "mkdocs-material"]
 
 [tool.setuptools]
 packages = ["hookeanity"]
