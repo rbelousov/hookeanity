@@ -1,4 +1,8 @@
-"""Spherical body subject to fluctuating forces and point-source surface forces."""
+"""Spherical body subject to fluctuating forces and point-source surface forces.
+
+Attributes:
+    Seed (typing.TypeAlias): Random-number generator seed
+"""
 
 from typing import cast, Any, Self, TypeAlias
 from collections.abc import Iterator
@@ -11,16 +15,6 @@ import json
 from pathlib import Path
 
 Seed: TypeAlias = int | np.integer
-# def to_cartesian(arg: Point | Grid) -> Point | Grid:
-#     """Transform spherical coordinates to the Cartesian."""
-#     xi = arg[0] if isinstance(arg, tuple) else arg[:, 0]
-#     theta = arg[1] if isinstance(arg, tuple) else arg[:, 1]
-#     phi = arg[2] if isinstance(arg, tuple) else arg[:, 2]
-
-#     x = xi * np.sin(theta) * np.cos(phi)
-#     y = xi * np.sin(theta) * np.sin(phi)
-#     z = xi * np.cos(theta)
-#     return np.array([x, y, z]) if instance(arg, Real) else np.column_stack((x, y, z))
 
 
 class System:
@@ -61,15 +55,17 @@ class System:
             else np.random.default_rng(rng if instance(rng, Seed) else None)
         )
 
+        pk1 = np.array([poly(1.0) for poly in self._inter._radial_functions])
+
         sz = len(self._inter)
         lhs = np.einsum(
             "np,kqnp,mn,m->kqnp",
             self._inter._wts.reshape(mesh),  # np
             self._inter._bfs.reshape(2 * mesh),  # kqnp
             self._inter._radial_values,  # mn
-            cast(NDArray, [poly(1.0) for poly in self._inter._radial_functions]),  # m
+            pk1,  # m
         ).reshape(sz, sz)
-        self._inverse_lhs = np.linalg.inv(lhs)
+        self._inverse_lhs = np.linalg.pinv(lhs)
 
         transform = self._inter.transform()
         partial = np.asarray(
@@ -78,7 +74,8 @@ class System:
         self._grad_div = np.einsum("aqk,bkl,ln->aqbn", partial, partial, transform)
         self._laplacian = np.einsum("bqk,bkl,ln->qn", partial, partial, transform)
 
-    @property
+        self._std = np.sqrt(2 * self._kbt) * pk1
+
     def __len__(self):
         """Return number of grid points."""
         return len(self._inter)
@@ -96,33 +93,17 @@ class System:
         """Return generator of quadrature points."""
         return self._inter.grid()
 
-    # def _elastic_stress(self):
-    # (self._lam + self._mu)
-    # term1 = np.einsum("aqk,bkl,ln,nb->aq", partial, partial, transform, self._state)
-    # term2 = np.einsum("bqk,bkl,ln,na->aq", partial, partial, transform, self._state)
+    def state(self) -> VectorValues:
+        """Return copy of the state."""
+        return np.array(self._state)
 
-    # return (self._lam + self._mu) * term1 + self._mu * term2
+    def surface(self) -> VectorValues:
+        """Return displacements of the surface points."""
+        return np.array(self._state[-self.mesh[1] :])
 
-    # def _external_force(self):
-    #     chi_north_pole = np.asarray(
-    #         [chi([0.0, 0.0]) for chi in self._inter.angular_functions]
-    #     )
-
-    #     return (
-    #         self._f_ext
-    #         * (self._radial_surface[:, None] * chi_north_pole[None, :]).ravel()
-    #     )
-
-    # def _fluctuations(self, dt):
-    #     normal = self.rng.normal(0.0, 1.0, size=(3, self._inter.nangles))
-
-    #     return np.asarray(
-    #         [
-    #             np.sqrt(2 * self._kbt * self._gamma * dt)
-    #             * (self._radial_surface[:, None] * nor[None, :]).ravel()
-    #             for nor in normal
-    #         ]
-    #     )
+    def surface_points(self) -> Grid:
+        """Return surface points of the grid."""
+        return np.array(self.grid()[-self.mesh[1] :])
 
     def __call__(self, dt: Real) -> Self:
         """Euler-Maruyama integration step.
@@ -133,14 +114,24 @@ class System:
         Returns:
             Updated system after one integration step.
         """
-        # elastic_stress = self._elastic_stress()
-        # external_force = self._external_force()
-        # fluct = self._fluctuations(dt)
+        # Elastic force
+        noc = self._state - self._state.mean(
+            axis=0
+        )  # no center translation for stability
         div_stress = (self._mu + self._lam) * np.einsum(
-            "aqbn,nb->qa", self._grad_div, self._state
-        ) + self._mu * np.einsum("qn,na->qa", self._laplacian, self._state)
-        delta = np.einsum("nq,qa->na", self._inverse_lhs, -div_stress)
-        self._state = np.array(self._state) + dt * delta
+            "aqbn,nb->qa", self._grad_div, noc
+        ) + self._mu * np.einsum("qn,na->qa", self._laplacian, noc)
+
+        # Fluctuations
+        flu = np.einsum(
+            "k,pa->kpa",
+            np.sqrt(dt) * self._std,
+            self._rng.normal(size=(self.mesh[1], DIM)),
+        ).reshape((len(self), DIM))
+
+        rhs = flu - dt * div_stress
+        delta = np.einsum("nq,qa->na", self._inverse_lhs, rhs)
+        self._state = self.state() + delta
         return self
 
     def save(self, filepath: str | Path) -> Self:

@@ -174,12 +174,12 @@ class MaternInterpolator:
 
     Attributes:
         _lmax (int): Maximum order of the spherical harmonic expansion
-        _bandfilter (NDArray[np.floating]): Band-limiting filter for the spherical harmonic expansion
-        _values (NDArray[np.floating]): Values of the spherical harmonics at the interpolation nodes
-        _theta (NDArray[np.floating]): Values of the spherical harmonic derivatives with respect to the polar angle at the interpolation nodes
-        _phi (NDArray[np.floating]): Values of the spherical harmonic derivatives with respect to the azimuthal angle at the interpolation nodes
-        _weights (NDArray[np.floating]): Quadrature weights for the interpolation nodes
-        _coefficients (NDArray[np.floating]): Coefficients of the cardinal functions in the Matérn kernel basis
+        _bandfilter (numpy.typing.NDArray[numpy.floating]): Band-limiting filter for the spherical harmonic expansion
+        _values (numpy.typing.NDArray[numpy.floating]): Values of the spherical harmonics at the interpolation nodes
+        _theta (numpy.typing.NDArray[numpy.floating]): Values of the spherical harmonic derivatives with respect to the polar angle at the interpolation nodes
+        _phi (numpy.typing.NDArray[numpy.floating]): Values of the spherical harmonic derivatives with respect to the azimuthal angle at the interpolation nodes
+        _weights (numpy.typing.NDArray[numpy.floating]): Quadrature weights for the interpolation nodes
+        _coefficients (numpy.typing.NDArray[numpy.floating]): Coefficients of the cardinal functions in the Matérn kernel basis
     """
 
     def __init__(

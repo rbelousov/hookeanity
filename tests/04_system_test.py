@@ -25,6 +25,9 @@ def test_save_and_load(tmp_path):
     system = System(mesh, lam, mu, f_ext, kbt)
     system.save(filepath)
     sample1 = system._rng.random(5)
+    assert system.mesh == mesh
+    assert system.surface().shape == (mesh[1], DIM)
+    assert system.surface_points().shape == (mesh[1], DIM)
 
     loaded = System.load(filepath)
     sample2 = loaded._rng.random(5)
@@ -36,11 +39,20 @@ def test_save_and_load(tmp_path):
     assert np.all(sample1 == sample2)
 
 
-def test_ball_system():
-    """Test unit ball without forces."""
+def test_system_smoke():
+    """Check first smoke of the system functionality."""
     mesh = (5, 25)
     dt = 1e-2
     sys = System(mesh, 1.0, 1.0, kbt=0.0)
     assert sys._kbt == 0.0
     assert sys(dt)._state.shape == (np.prod(mesh), DIM)
     assert np.all(sys._state == 0)
+
+    sys._state += 1
+    assert np.all(sys._state == 1)
+    assert sys(dt)._state.shape == (np.prod(mesh), DIM)
+    assert np.all(sys._state == 1)
+
+    sys = System(mesh, 1.0, 1.0)(dt)(dt)
+    assert sys._kbt == 1
+    assert np.all(sys._state != 0)

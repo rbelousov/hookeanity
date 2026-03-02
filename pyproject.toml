@@ -25,6 +25,7 @@ dependencies = [
 tests = ["pytest"]
 dev = ["pytest", "docformatter", "ruff", "pyright"]
 doc = ["mkdocs", "mkdocstrings[python]", "mkdocs-material"]
+examples = ["matplotlib", "jupyterlab", "ipywidgets", "tqdm", "pillow"]
 
 [tool.setuptools]
 packages = ["hookeanity"]

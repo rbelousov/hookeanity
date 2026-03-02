@@ -15,7 +15,7 @@ def jacobi_radau_quadrature(
     The quadarature is defined on the interval [-1, 1] for the weighting function of of the (0,2) Jacobi polynomials.
 
     Args:
-        num (int): Number of points
+        num: Number of points
 
     Returns:
         Nodes and weights of the quadrature

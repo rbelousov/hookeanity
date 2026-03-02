@@ -13,16 +13,16 @@ class Interpolation:
     """Expansion of a scalar-valued function in spherical coordinates.
 
     Attributes:
-        _radii: Radial quadrature points
-        _rws: Radial quadrature weights
-        _angles: Angular quadrature points (theta, phi)
-        _aws: Angular quadrature weights
-        _radial_functions: List of radial basis functions
-        _angular_functions: List of angular basis functions
-        _radial_values: Radial basis functions evaluated at the radial quadrature points
-        _angular_values: Angular basis functions evaluated at the angular quadrature points
-        _bfs: Basis functions evaluated at the quadrature points
-        _wts: Combined quadrature weights for the spherical grid
+        _radii (numpy.NDArray[numpy.floating]): Radial quadrature points
+        _rws (numpy.NDArray[numpy.floating]): Radial quadrature weights
+        _angles (numpy.NDArray[numpy.floating]): Angular quadrature points (theta, phi)
+        _aws (numpy.NDArray[numpy.floating]): Angular quadrature weights
+        _radial_functions (numpy.NDArray[numpy.floating]): List of radial basis functions
+        _angular_functions (numpy.NDArray[numpy.floating]): List of angular basis functions
+        _radial_values (numpy.NDArray[numpy.floating]): Radial basis functions evaluated at the radial quadrature points
+        _angular_values (numpy.NDArray[numpy.floating]): Angular basis functions evaluated at the angular quadrature points
+        _bfs (numpy.NDArray[numpy.floating]): Basis functions evaluated at the quadrature points
+        _wts (numpy.NDArray[numpy.floating]): Combined quadrature weights for the spherical grid
     """
 
     def __init__(
@@ -224,15 +224,3 @@ class Interpolation:
     def mesh(self) -> tuple[int, int]:
         """Return mesh specification of the interpolation grid."""
         return self.nradii, self.nangles
-
-    # def field_to_values(self, field: Field, grid: Grid | None = None) -> ScalarValues | VectorValues:
-    #     """Sample field at the quadrature points.
-
-    #     Args:
-    #         field: Scalar or vector field to sample
-
-    #     Returns:
-    #         Values of the field at the quadrature points
-    #     """
-    #     points = self.points() if grid is None else grid
-    #     return np.array([field(*p) for p in points])
