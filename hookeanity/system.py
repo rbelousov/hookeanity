@@ -18,7 +18,22 @@ Seed: TypeAlias = int | np.integer
 
 
 class System:
-    """Elastodynamic system."""
+    """Simulated system.
+
+    Attributes:
+        _lam (hookeanity.Real): Lamé lambda coefficient
+        _mu (hookeanity.Real): Lamé mu coefficient
+        _ext (hookeanity.Real): Magnitude of the external point force
+        _loc (tuple[hookeanity.Real, hookeanity.Real]): Solid angle specifying the location of the external point force
+        _kbt (hookeanity.Real): Temperature
+        _state (VectorValues): Displacements of the grid points
+        _inter (hookeanity.interpolation.Interpolation): Interpolation utilities
+        _rng (numpy.random.Generator): Numpy random-number generator
+        _trac (numpy.ndarray): Matrix operator of the elastic traction force
+        _ela (numpy.ndarray): Matrix operator of the divergence of the elastic stress
+        _force (numpy.ndarray): External point force
+        _std (numpy.ndarray): Intensity of the thermal fluctuations
+    """
 
     def __init__(
         self,
@@ -38,7 +53,7 @@ class System:
             lam: Lamé's first parameter
             mu: Lamé's second parameter (shear modulus)
             f_ext: Magnitude of the external force defaults to zero
-            f_loc: Solid angle specifying the location of the external point source
+            f_loc: Solid angle specifying the location of the external point force
             kbt: Effective temperature in units of energy defaults to one
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
@@ -57,41 +72,82 @@ class System:
             if instance(rng, np.random.Generator)
             else np.random.default_rng(rng if instance(rng, Seed) else None)
         )
+        # self._vec = self._state.ravel()
 
-        pk1 = np.array([poly(1.0) for poly in self._inter._radial_functions])
-
-        sz = len(self._inter)
-        self._lhs = np.einsum(
-            "np,kqnp,mn,m->kqnp",
-            self._inter._wts.reshape(mesh),  # np
-            self._inter._bfs.reshape(2 * mesh),  # kqnp
-            self._inter._radial_values,  # mn
-            pk1,  # m
-        ).reshape(sz, sz)
-        self._inverse_lhs = np.linalg.pinv(self._lhs)
-
+        # Derivative operator
         transform = self._inter.transform()
-        partial = np.asarray(
+        inverse = self._inter.inverse()
+        partial_xyz = np.array(
             [self._inter.partial_x(), self._inter.partial_y(), self._inter.partial_z()]
         )
-        self._grad_div = np.einsum("aqk,bkl,ln->aqbn", partial, partial, transform)
-        self._laplacian = np.einsum("bqk,bkl,ln->qn", partial, partial, transform)
+        partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
-        self._std = np.sqrt(2 * self._kbt) * pk1
+        eye = np.eye(DIM)
+        ndof = self.ndof
+        nbulk = ndof - DIM * mesh[1]
+        npoints = self.npoints
 
-        chis = np.array(
+        # Traction operator
+        normals = self.normals()
+        prj = np.kron(
+            np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye
+        )  # CoM removal
+        term0 = np.einsum("pa,pan->pn", normals, partial[-mesh[1] :, :, :])
+        term1 = self._mu * np.einsum("pn,bc->pbnc", term0, eye)
+        term2 = self._lam * np.einsum(
+            "pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :]
+        )
+        term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
+        trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
+        self._trac = trac @ prj
+
+        gd = np.einsum(
+            "lL,aLM,bMN,Nn->lanb",
+            inverse[: -mesh[1]],
+            partial_xyz,
+            partial_xyz,
+            transform,
+        ).reshape(nbulk, ndof)  # grad div
+        lap = np.einsum(
+            "ab,lL,cLM,cMN,Nn->lanb",
+            np.eye(DIM),
+            inverse[: -mesh[1]],
+            partial_xyz,
+            partial_xyz,
+            transform,
+        ).reshape(nbulk, ndof)  # laplacian
+        self._ela = (self._mu + self._lam) * gd + self._mu * lap  # div stress
+
+        force = np.zeros((mesh[1], DIM))
+        force[:, 2] = self._ext * np.array(
             [chi(np.array(self._loc)) for chi in self._inter._angular_functions]
         )
-        self._force = self._ext * np.einsum("k,p->kp", pk1, chis).ravel()
+        self._force = force.ravel()
+        self._std = np.sqrt(2 * self._kbt)
 
-    def __len__(self):
-        """Return number of grid points."""
-        return len(self._inter)
+    def normals(self) -> VectorValues:
+        """Return inward surface normals."""
+        st = np.sin(self._inter._angles[:, 0])
+        st2 = st**2
+        ct = np.cos(self._inter._angles[:, 0])
+        sp = np.sin(self._inter._angles[:, 1])
+        cp = np.cos(self._inter._angles[:, 1])
+        return -np.stack([st2 * cp, st2 * sp, st * ct], axis=1)
 
     @property
     def mesh(self) -> tuple[int, int]:
         """Return mesh specification of the point grid."""
         return self._inter.mesh
+
+    @property
+    def npoints(self) -> int:
+        """Return number of the grid points."""
+        return np.prod(self.mesh).item()
+
+    @property
+    def ndof(self) -> int:
+        """Return number of degrees of freedm."""
+        return DIM * self.npoints
 
     def points(self) -> Iterator[NDArray[np.floating]]:
         """Return generator of quadrature points."""
@@ -122,30 +178,21 @@ class System:
         Returns:
             Updated system after one integration step.
         """
-        # Elastic force
-        noc = self._state - self._state.mean(
-            axis=0
-        )  # no center translation for stability
-        div_stress = (self._mu + self._lam) * np.einsum(
-            "aqbn,nb->qa", self._grad_div, noc
-        ) + self._mu * np.einsum("qn,na->qa", self._laplacian, noc)
-        # div_stress = (self._mu + self._lam) * np.einsum(
-        #     "aqbn,nb->qa", self._grad_div, self._state
-        # ) + self._mu * np.einsum("qn,na->qa", self._laplacian, self._state)
+        mesh = self.mesh
+        nsurf = DIM * mesh[1]  # nuber of surface DoFs
+        bulk = slice(None, -nsurf)  # bulk selector
+        surf = slice(-nsurf, None)  # surface selector
+        vec = self.state().ravel()  # State Vector
 
-        # Fluctuations
-        flu = np.einsum(
-            "k,pa->kpa",
-            np.sqrt(dt) * self._std,
-            self._rng.normal(size=(self.mesh[1], DIM)),
-        ).reshape((len(self), DIM))
+        # Surface step
+        traction = self._trac @ vec
+        flu = (np.sqrt(dt) * self._std) * self._rng.normal(size=nsurf)
+        vec[surf] += dt * (traction + self._force) + flu
 
-        # div_stress[:, -1] -= self._force # NB! External force subtracted!
-        rhs = flu - dt * div_stress
-        delta = np.einsum("nq,qa->na", self._inverse_lhs, rhs)
-        # delta = np.linalg.solve(self._lhs, rhs)
-        # delta, *_ = np.linalg.lstsq(self._lhs, rhs, rcond=1e-6)
-        self._state = self.state() + delta
+        # Bulk step
+        vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
+
+        self._state = vec.reshape(self.npoints, DIM)
         return self
 
     def save(self, filepath: str | Path) -> Self:

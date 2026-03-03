@@ -200,9 +200,13 @@ class MaternInterpolator:
             lmax: Order of kernel expansion defaults to the square root of the number of particles
         """
         sz = len(nodes)
-        grain = 4 * np.pi / sz
-
         self._lmax = np.sqrt(sz).astype(int) if lmax is None else lmax
+        self._weights = (
+            np.ones(len(nodes), dtype=float)
+            if weights is None
+            else np.array(weights, dtype=float)
+        )
+        grain = 4 * np.pi / sz
         self._bandfilter = np.array(
             [
                 (1 + ell * (ell + 1) * grain) ** -(1 + smoothness)
@@ -215,11 +219,6 @@ class MaternInterpolator:
         self._values = np.array([sh(nodes) for sh in basis])
         self._theta = np.array([sh.partial_theta(nodes) for sh in basis])
         self._phi = np.array([sh.partial_phi(nodes) for sh in basis])
-        self._weights = (
-            np.ones(len(nodes), dtype=float)
-            if weights is None
-            else np.array(weights, dtype=float)
-        )
         self._coefficients = np.linalg.pinv(
             np.einsum("y,yp,yq", self._bandfilter, self._values, self._values)
         )
