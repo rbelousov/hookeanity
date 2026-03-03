@@ -30,7 +30,8 @@ class System:
         _inter (hookeanity.interpolation.Interpolation): Interpolation utilities
         _rng (numpy.random.Generator): Numpy random-number generator
         _trac (numpy.ndarray): Matrix operator of the elastic traction force
-        _ela (numpy.ndarray): Matrix operator of the divergence of the elastic stress
+        _ela_surf (numpy.ndarray): Matrix operator of the divergence of the elastic stress on the surface
+        _ela_pinv (numpy.ndarray): Pseudoinverse matrix operator of the divergence of the elastic stress in the bulk
         _force (numpy.ndarray): External point force
         _std (numpy.ndarray): Intensity of the thermal fluctuations
     """
@@ -84,8 +85,11 @@ class System:
 
         eye = np.eye(DIM)
         ndof = self.ndof
-        nbulk = ndof - DIM * mesh[1]
+        nsurf = DIM * mesh[1]
+        nbulk = ndof - nsurf
         npoints = self.npoints
+        bulk = slice(None, -nsurf)  # bulk selector
+        surf = slice(-nsurf, None)  # surface selector
 
         # Traction operator
         normals = self.normals()
@@ -116,7 +120,9 @@ class System:
             partial_xyz,
             transform,
         ).reshape(nbulk, ndof)  # laplacian
-        self._ela = (self._mu + self._lam) * gd + self._mu * lap  # div stress
+        ela = (self._mu + self._lam) * gd + self._mu * lap  # div stress
+        self._ela_surf = ela[:, surf]
+        self._ela_pinv = np.linalg.pinv(ela[:, bulk])
 
         force = np.zeros((mesh[1], DIM))
         force[:, 2] = self._ext * np.array(
@@ -190,7 +196,8 @@ class System:
         vec[surf] += dt * (traction + self._force) + flu
 
         # Bulk step
-        vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
+        # vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
+        vec[bulk] = -self._ela_pinv @ self._ela_surf @ vec[surf]
 
         self._state = vec.reshape(self.npoints, DIM)
         return self

@@ -4,7 +4,7 @@ import numpy as np
 from collections.abc import Iterator
 from numpy.typing import NDArray, ArrayLike
 from scipy.special import sph_legendre_p
-from .base import Real, instance
+from .base import Real, VectorValues, instance
 
 
 def fibonacci_points(n: int) -> NDArray[np.floating]:
@@ -202,7 +202,7 @@ class MaternInterpolator:
         sz = len(nodes)
         self._lmax = np.sqrt(sz).astype(int) if lmax is None else lmax
         self._weights = (
-            np.ones(len(nodes), dtype=float)
+            np.ones(sz, dtype=float)
             if weights is None
             else np.array(weights, dtype=float)
         )
