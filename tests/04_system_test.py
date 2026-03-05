@@ -4,6 +4,7 @@ import pytest
 import numpy as np
 from hookeanity.base import DIM
 from hookeanity.system import System
+from hookeanity.interpolation import Interpolation
 
 
 def test_system_init():
@@ -48,11 +49,10 @@ def test_stress_divergence():
     )
     sys = System(mesh, 1.0, 1.0, kbt=0.0, state=state)
 
-    transform = sys._inter.transform()
-    inverse = sys._inter.inverse()
-    partial = np.asarray(
-        [sys._inter.partial_x(), sys._inter.partial_y(), sys._inter.partial_z()]
-    )
+    inter = Interpolation(mesh)
+    transform = inter.transform()
+    inverse = inter.inverse()
+    partial = np.asarray([inter.partial_x(), inter.partial_y(), inter.partial_z()])
     noc = sys._state - sys._state.mean(axis=0)
 
     grad_div = np.einsum("lL,aLM,bMN,Nn->lanb", inverse, partial, partial, transform)
@@ -78,6 +78,24 @@ def test_stress_divergence():
     value = mtx[:-surf, :] @ vec
     assert value == pytest.approx(expected[:-surf])
 
+    eye = np.eye(DIM)
+    npoints = sys.npoints
+    ndof = DIM * npoints
+    noc = sys._state - sys._state.mean(axis=0)
+    grid = sys.grid()
+    r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
+    ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
+    rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
+    rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
+    rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
+    rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
+    ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
+    rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
+
+    expected = mtx[:-surf, :] @ rot @ vec
+    value = sys._ela @ sys._state.ravel()
+    assert value == pytest.approx(expected)
+
 
 def test_traction():
     """Test formulas for the traction force."""
@@ -95,21 +113,19 @@ def test_traction():
     assert prj @ sys._state.ravel() == pytest.approx(noc.ravel())
 
     grid = sys.grid()
-    r = grid - grid.mean(axis=0, keepdims=True) # center for rotations about CoM
+    r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
     ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
     rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
     rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
     rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
-    rot_xyz = np.column_stack([rot_x, rot_y, rot_z]) # (ndof, 3)
-    ortho, _ = np.linalg.qr(rot_xyz, mode="reduced") # (ndof, 3)
-    rot = np.eye(ndof) - ortho @ ortho.T             # (ndof, ndof)
+    rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
+    ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
+    rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
 
-
-    transform = sys._inter.transform()
-    inverse = sys._inter.inverse()
-    partial_xyz = np.array(
-        [sys._inter.partial_x(), sys._inter.partial_y(), sys._inter.partial_z()]
-    )
+    inter = Interpolation(mesh)
+    transform = inter.transform()
+    inverse = inter.inverse()
+    partial_xyz = np.array([inter.partial_x(), inter.partial_y(), inter.partial_z()])
     partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
     noc = (rot @ noc.ravel()).reshape(npoints, DIM)
@@ -157,3 +173,17 @@ def test_system_smoke():
     sys_n(dt)(dt)(dt)
     sys_s(dt)(dt)(dt)
     assert not (sys_n._state == pytest.approx(sys_s._state))
+
+
+def test_system_cache(tmp_path):
+    """Test saving and loading cache data for `System` objects."""
+    mesh = (5, 6)
+    cache = tmp_path / "cache.5x6.l2m3.h5"
+    sys1 = System(mesh, 2.0, 3.0)
+    sys1.save_cache(cache)
+
+    sys2 = System(mesh, 2.0, 3.0, cache=cache)
+    assert np.all(sys1._grid == sys2._grid)
+    assert np.all(sys1._trac == sys2._trac)
+    assert np.all(sys1._ela == sys2._ela)
+    assert np.all(sys1._force == sys2._force)

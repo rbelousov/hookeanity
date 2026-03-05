@@ -5,7 +5,6 @@ Attributes:
 """
 
 from typing import cast, Any, Self, TypeAlias
-from collections.abc import Iterator
 import numpy as np
 from numpy.typing import NDArray
 from .interpolation import Interpolation
@@ -18,6 +17,81 @@ from .logging import logger
 Seed: TypeAlias = int | np.integer
 
 
+def attr_any(file: h5py.File, key: str) -> Any:
+    """Read an attribute from an HDF5 file handle.
+
+    Args:
+        file: File handle
+        key: Attribute name
+
+    Returns:
+        Attribute value
+    """
+    return cast(Any, file.attrs[key])
+
+
+def attr_float(file: h5py.File, key: str) -> float:
+    """Read floating-point attribute from an HDF5 file handle.
+
+    Args:
+        file: File handle
+        key: Attribute name
+
+    Returns:
+        Attribute value
+    """
+    return float(attr_any(file, key))
+
+
+def attr_mesh(file: h5py.File) -> tuple[int, int]:
+    """Read mesh scheme from an HDF5 file handle attributes.
+
+    Args:
+        file: File handle
+
+    Returns:
+        Mesh specification
+
+    Raises:
+        ValueError When mesh attribute is missing
+    """
+    key = "mesh"
+    arr = np.asarray(attr_any(file, key))
+    if arr.shape != (2,):
+        raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
+    return (int(arr[0]), int(arr[1]))
+
+
+def attr_f_loc(file: h5py.File) -> tuple[float, float]:
+    """Read point of the external force application from an HDF5 file handle attributes.
+
+    Args:
+        file: File handle
+
+    Returns:
+        Location of the force application point
+    """
+    key = "f_loc"
+    arr = np.asarray(attr_any(file, key))
+    if arr.shape != (2,):
+        raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
+    return (float(arr[0]), float(arr[1]))
+
+
+def ndfloat_dataset(file: h5py.File, key: str) -> NDArray[np.floating]:
+    """Load numpy array of floating-point numbers from an HDF5 file handle.
+
+    Args:
+        file: File handle
+        key: Dataset key
+
+    Returns:
+        Numpy error loaded from the file
+    """
+    dset = cast(h5py.Dataset, file[key])
+    return np.array(dset[()], dtype=float)
+
+
 class System:
     """Simulated system.
 
@@ -27,7 +101,8 @@ class System:
         _ext (hookeanity.Real): Magnitude of the external point force
         _loc (tuple[hookeanity.Real, hookeanity.Real]): Solid angle specifying the location of the external point force
         _kbt (hookeanity.Real): Temperature
-        _state (VectorValues): Displacements of the grid points
+        _state (hookeanity.VectorValues): Displacements of the grid points
+        _grid (kookeanity.Grid): Mesh grid
         _inter (hookeanity.interpolation.Interpolation): Interpolation utilities
         _rng (numpy.random.Generator): Numpy random-number generator
         _trac (numpy.ndarray): Matrix operator of the elastic traction force
@@ -49,6 +124,7 @@ class System:
         state: VectorValues | None = None,
         rng: np.random.Generator | Seed | None = None,
         verbose: bool = False,
+        cache: str | Path | None = None,
     ):
         """Initialize the simulation system.
 
@@ -62,13 +138,14 @@ class System:
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
             verbose: Log the initialization
+            cache: Path to the cached mesh-associated data
         """
+        self._mesh = mesh
         self._lam = lam
         self._mu = mu
         self._ext = f_ext
         self._loc = f_loc
         self._kbt = kbt
-        self._inter = Interpolation(mesh)
         self._state = (
             np.zeros((np.prod(mesh), DIM)) if state is None else np.array(state)
         )
@@ -79,23 +156,34 @@ class System:
         )
         self.verbose = verbose
 
-        # Helper variabless
+        # Initialization starts
         self.info("Initializing system")
+        if cache is None:
+            self._build_operators()
+        else:
+            self.info(f"  loading cached data from {cache}")
+            self.load_cache(cache)
+        self._std = np.sqrt(2 * self._kbt)
+        self.info("System ready")
+
+    def _build_operators(self):
+        """Build operators for the equations of motion."""
+        # Helpers
+        mesh = self._mesh
         ndof = self.ndof
         nsurf = DIM * mesh[1]
         nbulk = ndof - nsurf
         npoints = self.npoints
-        bulk = slice(None, -nsurf)  # bulk selector
-        surf = slice(-nsurf, None)  # surface selector
         eye = np.eye(DIM)
-        grid = self.grid()
+        inter = Interpolation(mesh)
+        self._grid = inter.grid()
 
         # Derivative operator
         self.info("  derivative operator")
-        transform = self._inter.transform()
-        inverse = self._inter.inverse()
+        transform = inter.transform()
+        inverse = inter.inverse()
         partial_xyz = np.array(
-            [self._inter.partial_x(), self._inter.partial_y(), self._inter.partial_z()]
+            [inter.partial_x(), inter.partial_y(), inter.partial_z()]
         )
         partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
@@ -109,13 +197,15 @@ class System:
         #     np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye
         # )
 
-        r = grid - grid.mean(axis=0, keepdims=True) # center for rotations about CoM
+        grid = self._grid - self._grid.mean(
+            axis=0, keepdims=True
+        )  # center for rotations about CoM
         ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
-        rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
-        rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
-        rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
-        rot_xyz = np.column_stack([rot_x, rot_y, rot_z]) # (ndof, 3)
-        ortho, _ = np.linalg.qr(rot_xyz, mode="reduced") # (ndof, 3)
+        rot_x = np.cross(ex, grid).reshape(-1)  # ω = ex
+        rot_y = np.cross(ey, grid).reshape(-1)  # ω = ey
+        rot_z = np.cross(ez, grid).reshape(-1)  # ω = ez
+        rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
+        ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
         # rot = np.eye(ndof) - ortho @ ortho.T             # (ndof, ndof)
 
         # Traction operator
@@ -129,7 +219,9 @@ class System:
         term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
         trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
         # self._trac = trac @ rot @ ortho
-        rigid = np.column_stack([trans, ortho]) # remove rigid-body motion leakage (ndof, 6)
+        rigid = np.column_stack(
+            [trans, ortho]
+        )  # remove rigid-body motion leakage (ndof, 6)
         rigid, _ = np.linalg.qr(rigid, mode="reduced")  # re-orthonormalize all 6
         self._trac = trac - (trac @ rigid) @ rigid.T
 
@@ -151,20 +243,16 @@ class System:
             transform,
         ).reshape(nbulk, ndof)  # laplacian
         ela = (self._mu + self._lam) * gd + self._mu * lap  # div stress
-        ela = ela - (ela @ rigid) @ rigid.T # remove rigid-body motion leakage (ndof, 6)
-        self._ela_surf = ela[:, surf] 
-        self._ela_bulk = ela[:, bulk]
-        # self._ela_pinv = np.linalg.pinv(ela[:, bulk])
-
+        self._ela = (
+            ela - (ela @ rigid) @ rigid.T
+        )  # remove rigid-body motion leakage (ndof, 6)
 
         self.info("  additive forces")
         force = np.zeros((mesh[1], DIM))
         force[:, 2] = self._ext * np.array(
-            [chi(np.array(self._loc)) for chi in self._inter._angular_functions]
+            [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()
-        self._std = np.sqrt(2 * self._kbt)
-        self.info("System ready")
 
     def info(self, message: str):
         """Log information message in the verbose mode."""
@@ -173,17 +261,18 @@ class System:
 
     def normals(self) -> VectorValues:
         """Return inward surface normals."""
-        st = np.sin(self._inter._angles[:, 0])
+        angles = self._grid[-self.mesh[-1] :, 1:]
+        st = np.sin(angles[:, 0])
         st2 = st**2
-        ct = np.cos(self._inter._angles[:, 0])
-        sp = np.sin(self._inter._angles[:, 1])
-        cp = np.cos(self._inter._angles[:, 1])
+        ct = np.cos(angles[:, 0])
+        sp = np.sin(angles[:, 1])
+        cp = np.cos(angles[:, 1])
         return -np.stack([st2 * cp, st2 * sp, st * ct], axis=1)
 
     @property
     def mesh(self) -> tuple[int, int]:
         """Return mesh specification of the point grid."""
-        return self._inter.mesh
+        return self._mesh
 
     @property
     def npoints(self) -> int:
@@ -195,13 +284,9 @@ class System:
         """Return number of degrees of freedm."""
         return DIM * self.npoints
 
-    def points(self) -> Iterator[NDArray[np.floating]]:
-        """Return generator of quadrature points."""
-        return self._inter.points()
-
     def grid(self) -> Grid:
         """Return generator of quadrature points."""
-        return self._inter.grid()
+        return self._grid
 
     def state(self) -> VectorValues:
         """Return copy of the state."""
@@ -236,14 +321,24 @@ class System:
         vec[surf] += dt * (traction + self._force) + flu
 
         # Bulk step
-        vec[bulk] = np.linalg.solve(self._ela_bulk, -self._ela_surf @ vec[surf])
+        vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
         # vec[bulk] = -self._ela_pinv @ self._ela_surf @ vec[surf]
 
         self._state = vec.reshape(self.npoints, DIM)
         return self
 
     def save(self, filepath: str | Path) -> Self:
-        """Save system data into an HDF5 file."""
+        """Save system data into an HDF5 file.
+
+        Args:
+            filepath: Path to the file to save data into
+
+        Raises:
+            TypeError: On missing/invalid checkpoint fields or unknown RNG class
+
+        Returns:
+            Self for fluent chaining
+        """
 
         def json_default(obj):
             if isinstance(obj, np.ndarray):
@@ -256,7 +351,7 @@ class System:
 
         with h5py.File(filepath, "w") as f:
             # Datasets
-            f.create_dataset("points", data=self.grid())
+            f.create_dataset("points", data=self._grid, compression="lzf", shuffle=True)
             f.create_dataset("state", data=self._state, compression="lzf", shuffle=True)
 
             # Metadata as attributes
@@ -274,14 +369,24 @@ class System:
         return self
 
     @classmethod
-    def load(cls, filepath: str | Path) -> Self:
+    def load(
+        cls,
+        filepath: str | Path,
+        verbose: bool = False,
+        cache: str | Path | None = None,
+    ) -> Self:
         """Load system data from an HDF5 file.
 
         Args:
             filepath: Path to the file to load the data from
+            verbose: Log the initialization
+            cache: Path to the cached mesh-associated data
 
         Raises:
             ValueError: On missing/invalid checkpoint fields or unknown RNG class
+
+        Returns:
+            Loaded instance of the system
         """
 
         def decode_text(x: Any) -> str:
@@ -297,26 +402,6 @@ class System:
             if isinstance(obj, dict):
                 return {k: restore_numpy(v) for k, v in obj.items()}
             return obj
-
-        def attr_any(f: h5py.File, key: str) -> Any:
-            return cast(Any, f.attrs[key])
-
-        def attr_float(f: h5py.File, key: str) -> float:
-            return float(attr_any(f, key))
-
-        def attr_mesh(f: h5py.File) -> tuple[int, int]:
-            key = "mesh"
-            arr = np.asarray(attr_any(f, key))
-            if arr.shape != (2,):
-                raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
-            return (int(arr[0]), int(arr[1]))
-
-        def attr_f_loc(f: h5py.File) -> tuple[float, float]:
-            key = "f_loc"
-            arr = np.asarray(attr_any(f, key))
-            if arr.shape != (2,):
-                raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
-            return (float(arr[0]), float(arr[1]))
 
         with h5py.File(filepath, "r") as f:
             mesh = attr_mesh(f)
@@ -351,4 +436,82 @@ class System:
                 kbt=kbt,
                 state=state,
                 rng=rng,
+                verbose=verbose,
+                cache=cache,
             )
+
+    def save_cache(self, filepath: str | Path) -> Self:
+        """Save mesh in a cache file.
+
+        Args:
+            filepath: Path to the cache file
+
+        Returns:
+            Self for fluent chaining
+        """
+        with h5py.File(filepath, "w") as f:
+            # Datasets
+            f.create_dataset("grid", data=self._grid, compression="lzf", shuffle=True)
+            f.create_dataset("trac", data=self._trac, compression="lzf", shuffle=True)
+            f.create_dataset("ela", data=self._ela, compression="lzf", shuffle=True)
+            f.create_dataset(
+                "fext",
+                data=self._force[DIM - 2 :: DIM],
+                compression="lzf",
+                shuffle=True,
+            )
+
+            # Metadata as attributes
+            f.attrs["mesh"] = self.mesh
+            f.attrs["lambda"] = float(self._lam)
+            f.attrs["mu"] = float(self._mu)
+            f.attrs["f_ext"] = float(self._ext)
+            f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
+
+        return self
+
+    def load_cache(self, filepath: str | Path) -> Self:
+        """Save mesh in a cache file.
+
+        Args:
+            filepath: Path to the cache file
+
+        Returns:
+            Self for fluent chaining
+
+        Raises:
+            AssertionError On inconsistent attributes between the system and the cache file
+            ValueError On missing cache data in the file
+        """
+        with h5py.File(filepath, "r") as f:
+            mesh = attr_mesh(f)
+            lam = attr_float(f, "lambda")
+            mu = attr_float(f, "mu")
+            f_ext = attr_float(f, "f_ext")
+            f_loc = attr_f_loc(f)
+
+            assert mesh == self._mesh, (
+                "Inconsistent meshes between the system and the cache file"
+            )
+            assert lam == self._lam, (
+                "Inconsistent Lamè coefficient lambda between the system and the cache file"
+            )
+            assert mu == self._mu, (
+                "Inconsistent Lamè coefficient mu between the system and the cache file"
+            )
+            assert f_ext == self._ext, (
+                "Inconsistent force magnitudes between the system and the cache file"
+            )
+            assert f_loc == self._loc, (
+                "Inconsistent force-application points between the system and the cache file"
+            )
+
+            # Datasets
+            self._grid = ndfloat_dataset(f, "grid")
+            self._trac = ndfloat_dataset(f, "trac")
+            self._ela = ndfloat_dataset(f, "ela")
+            force = np.zeros((mesh[1], DIM))
+            force[:, 2] = ndfloat_dataset(f, "fext")
+            self._force = force.ravel()
+
+        return self
