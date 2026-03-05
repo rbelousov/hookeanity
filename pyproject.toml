@@ -15,7 +15,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 
 dependencies = [
-    "numpy", "scipy", "typeguard", "jaxtyping", "h5py"
+    "numpy", "scipy", "typeguard", "jaxtyping", "h5py", "loguru"
     # "jax", "optax", "flax", "jaxopt", "plyfile",
     # "matplotlib", "jupyterlab", "ipywidgets",
     # "uncertainties"

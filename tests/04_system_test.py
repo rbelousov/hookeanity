@@ -123,6 +123,7 @@ def test_system_smoke():
     """Check first smoke of the system functionality."""
     mesh = (5, 10)
     dt = 1e-2
+
     sys = System(mesh, 1.0, 1.0, kbt=0.0)
     assert sys._kbt == 0.0
     assert sys(dt)._state.shape == (np.prod(mesh), DIM)
@@ -133,7 +134,7 @@ def test_system_smoke():
     assert sys(dt)._state.shape == (np.prod(mesh), DIM)
     assert sys._state == pytest.approx(1, abs=1e-3)
 
-    sys = System(mesh, 1.0, 1.0)(dt)
+    sys = System(mesh, 1.0, 1.0, verbose=True)(dt)
     assert sys._kbt == 1
     assert sys._state != pytest.approx(1, abs=1e-3)
 

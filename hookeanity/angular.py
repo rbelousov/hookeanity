@@ -4,7 +4,7 @@ import numpy as np
 from collections.abc import Iterator
 from numpy.typing import NDArray, ArrayLike
 from scipy.special import sph_legendre_p
-from .base import Real, VectorValues, instance
+from .base import Real, instance
 
 
 def fibonacci_points(n: int) -> NDArray[np.floating]:

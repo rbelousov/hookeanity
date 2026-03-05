@@ -13,6 +13,7 @@ from .base import DIM, Real, Grid, VectorValues, instance
 import h5py
 import json
 from pathlib import Path
+from .logging import logger
 
 Seed: TypeAlias = int | np.integer
 
@@ -34,6 +35,7 @@ class System:
         _ela_pinv (numpy.ndarray): Pseudoinverse matrix operator of the divergence of the elastic stress in the bulk
         _force (numpy.ndarray): External point force
         _std (numpy.ndarray): Intensity of the thermal fluctuations
+        verbose (bool): Trigger of logging
     """
 
     def __init__(
@@ -46,6 +48,7 @@ class System:
         kbt: Real = 1.0,
         state: VectorValues | None = None,
         rng: np.random.Generator | Seed | None = None,
+        verbose: bool = False,
     ):
         """Initialize the simulation system.
 
@@ -58,6 +61,7 @@ class System:
             kbt: Effective temperature in units of energy defaults to one
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
+            verbose: Log the initialization
         """
         self._lam = lam
         self._mu = mu
@@ -73,16 +77,10 @@ class System:
             if instance(rng, np.random.Generator)
             else np.random.default_rng(rng if instance(rng, Seed) else None)
         )
-        # self._vec = self._state.ravel()
+        self.verbose = verbose
 
-        # Derivative operator
-        transform = self._inter.transform()
-        inverse = self._inter.inverse()
-        partial_xyz = np.array(
-            [self._inter.partial_x(), self._inter.partial_y(), self._inter.partial_z()]
-        )
-        partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
-
+        # Helper variabless
+        self.info("Initializing system")
         eye = np.eye(DIM)
         ndof = self.ndof
         nsurf = DIM * mesh[1]
@@ -91,7 +89,17 @@ class System:
         bulk = slice(None, -nsurf)  # bulk selector
         surf = slice(-nsurf, None)  # surface selector
 
+        # Derivative operator
+        self.info("  derivative operator")
+        transform = self._inter.transform()
+        inverse = self._inter.inverse()
+        partial_xyz = np.array(
+            [self._inter.partial_x(), self._inter.partial_y(), self._inter.partial_z()]
+        )
+        partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
+
         # Traction operator
+        self.info("  elastic traction operator")
         normals = self.normals()
         prj = np.kron(
             np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye
@@ -105,6 +113,8 @@ class System:
         trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
         self._trac = trac @ prj
 
+        # Stress-divergence operator
+        self.info("  divergence of the elastic stress")
         gd = np.einsum(
             "lL,aLM,bMN,Nn->lanb",
             inverse[: -mesh[1]],
@@ -124,12 +134,19 @@ class System:
         self._ela_surf = ela[:, surf]
         self._ela_pinv = np.linalg.pinv(ela[:, bulk])
 
+        self.info("  additive forces")
         force = np.zeros((mesh[1], DIM))
         force[:, 2] = self._ext * np.array(
             [chi(np.array(self._loc)) for chi in self._inter._angular_functions]
         )
         self._force = force.ravel()
         self._std = np.sqrt(2 * self._kbt)
+        self.info("System ready")
+
+    def info(self, message: str):
+        """Log information message in the verbose mode."""
+        if self.verbose:
+            logger.info(message)
 
     def normals(self) -> VectorValues:
         """Return inward surface normals."""
