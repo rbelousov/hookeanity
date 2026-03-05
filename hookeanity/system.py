@@ -53,7 +53,7 @@ def attr_mesh(file: h5py.File) -> tuple[int, int]:
         Mesh specification
 
     Raises:
-        ValueError When mesh attribute is missing
+        ValueError When mesh attribute is malformed
     """
     key = "mesh"
     arr = np.asarray(attr_any(file, key))
@@ -70,6 +70,9 @@ def attr_f_loc(file: h5py.File) -> tuple[float, float]:
 
     Returns:
         Location of the force application point
+
+    Raises:
+        ValueError When f_loc attribute is malformed
     """
     key = "f_loc"
     arr = np.asarray(attr_any(file, key))
@@ -110,7 +113,7 @@ class System:
         _ela_bulk (numpy.ndarray): Matrix operator of the divergence of the elastic stress in the bulk
         _force (numpy.ndarray): External point force
         _std (numpy.ndarray): Intensity of the thermal fluctuations
-        verbose (bool): Trigger of logging
+        verbose (bool): Trigger of logging output
     """
 
     def __init__(
@@ -138,7 +141,7 @@ class System:
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
             verbose: Log the initialization
-            cache: Path to the cached mesh-associated data
+            cache: Path to the cached numerical data
         """
         self._mesh = mesh
         self._lam = lam
@@ -173,12 +176,11 @@ class System:
         ndof = self.ndof
         nsurf = DIM * mesh[1]
         nbulk = ndof - nsurf
-        npoints = self.npoints
         eye = np.eye(DIM)
         inter = Interpolation(mesh)
         self._grid = inter.grid()
 
-        # Derivative operator
+        # Derivative operators
         self.info("  derivative operator")
         transform = inter.transform()
         inverse = inter.inverse()
@@ -186,27 +188,6 @@ class System:
             [inter.partial_x(), inter.partial_y(), inter.partial_z()]
         )
         partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
-
-        # Projection operators to remove translations of and rotations about CoM
-        # trans = np.zeros((3 * npoints, 3), dtype=float)
-        # s = 1.0 / np.sqrt(npoints)
-        # trans[0::3, 0] = s  # x translation
-        # trans[1::3, 1] = s  # y translation
-        # trans[2::3, 2] = s  # z translation
-        # prj = np.kron(
-        #     np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye
-        # )
-
-        # grid = self._grid - self._grid.mean(
-        #     axis=0, keepdims=True
-        # )  # center for rotations about CoM
-        # ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
-        # rot_x = np.cross(ex, grid).reshape(-1)  # ω = ex
-        # rot_y = np.cross(ey, grid).reshape(-1)  # ω = ey
-        # rot_z = np.cross(ez, grid).reshape(-1)  # ω = ez
-        # rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
-        # ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
-        # # rot = np.eye(ndof) - ortho @ ortho.T             # (ndof, ndof)
 
         # Traction operator
         self.info("  elastic traction operator")
@@ -219,12 +200,6 @@ class System:
         term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
         trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
         self._trac = trac
-        # # self._trac = trac @ rot @ ortho
-        # rigid = np.column_stack(
-        #     [trans, ortho]
-        # )  # remove rigid-body motion leakage (ndof, 6)
-        # rigid, _ = np.linalg.qr(rigid, mode="reduced")  # re-orthonormalize all 6
-        # self._trac = trac - (trac @ rigid) @ rigid.T
 
         # Stress-divergence operator
         self.info("  divergence of the elastic stress")
@@ -235,19 +210,15 @@ class System:
             partial_xyz,
             transform,
         ).reshape(nbulk, ndof)  # grad div
-        lap = np.einsum(
+        vl = np.einsum(
             "ab,lL,cLM,cMN,Nn->lanb",
-            np.eye(DIM),
+            eye,
             inverse[: -mesh[1]],
             partial_xyz,
             partial_xyz,
             transform,
-        ).reshape(nbulk, ndof)  # laplacian
-        ela = (self._mu + self._lam) * gd + self._mu * lap  # div stress
-        self._ela = ela
-        # self._ela = (
-        #     ela - (ela @ rigid) @ rigid.T
-        # )  # remove rigid-body motion leakage (ndof, 6)
+        ).reshape(nbulk, ndof)  # vector laplacian
+        self._ela = (self._mu + self._lam) * gd + self._mu * vl  # div stress
 
         self.info("  additive forces")
         force = np.zeros((mesh[1], DIM))
@@ -260,6 +231,44 @@ class System:
         """Log information message in the verbose mode."""
         if self.verbose:
             logger.info(message)
+
+    def apply_rigid_motion_projection(self):
+        """Project out rigid-body motion in elastic operators."""
+        npoints = self.npoints
+        ndof = self.ndof
+
+        # Projection operators to remove translations of and rotations about CoM
+        trans = np.zeros((ndof, DIM), dtype=float)
+        s = 1.0 / np.sqrt(npoints)
+        trans[0::3, 0] = s  # x translation
+        trans[1::3, 1] = s  # y translation
+        trans[2::3, 2] = s  # z translation
+
+        # Cartesian coordinates of the grid points
+        rad = self._grid[:, 0]
+        theta = self._grid[:, 1]
+        phi = self._grid[:, 2]
+        x = rad * np.sin(theta) * np.cos(phi)
+        y = rad * np.sin(theta) * np.sin(phi)
+        z = rad * np.cos(theta)
+        pos = np.stack([x, y, z], axis=1)
+        pos -= pos.mean(axis=0, keepdims=True)
+        ex, ey, ez = np.eye(DIM)
+
+        rot_x = np.cross(ex, pos).reshape(-1)
+        rot_y = np.cross(ey, pos).reshape(-1)
+        rot_z = np.cross(ez, pos).reshape(-1)
+        rot_xyz = np.column_stack([rot_x, rot_y, rot_z])
+        ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
+
+        rigid = np.column_stack(
+            [trans, ortho]
+        )  # remove rigid-body motion leakage (ndof, 6)
+        rigid, _ = np.linalg.qr(rigid, mode="reduced")  # re-orthonormalize all 6
+        self._trac = self._trac - (self._trac @ rigid) @ rigid.T
+        self._ela = (
+            self._ela - (self._ela @ rigid) @ rigid.T
+        )  # remove rigid-body motion leakage (ndof, 6)
 
     def normals(self) -> VectorValues:
         """Return inward surface normals."""

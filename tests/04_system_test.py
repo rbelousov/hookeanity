@@ -53,47 +53,31 @@ def test_stress_divergence():
     transform = inter.transform()
     inverse = inter.inverse()
     partial = np.asarray([inter.partial_x(), inter.partial_y(), inter.partial_z()])
-    noc = sys._state # - sys._state.mean(axis=0)
 
     grad_div = np.einsum("lL,aLM,bMN,Nn->lanb", inverse, partial, partial, transform)
     laplacian = np.einsum("lL,bLM,bMN,Nn->ln", inverse, partial, partial, transform)
     expected = (
-        (sys._mu + sys._lam) * np.einsum("lanb,nb->la", grad_div, noc)
-        + sys._mu * np.einsum("ln,na->la", laplacian, noc)
+        (sys._mu + sys._lam) * np.einsum("lanb,nb->la", grad_div, sys._state)
+        + sys._mu * np.einsum("ln,na->la", laplacian, sys._state)
     ).ravel()
 
-    vec = noc.ravel()
-    sz = len(vec)
+    ndof = sys.ndof
     gd = np.einsum("lL,aLM,bMN,Nn->lanb", inverse, partial, partial, transform).reshape(
-        sz, sz
+        ndof, ndof
     )
     lap = np.einsum(
         "ab,lL,cLM,cMN,Nn->lanb", np.eye(DIM), inverse, partial, partial, transform
-    ).reshape(sz, sz)
+    ).reshape(ndof, ndof)
     mtx = (sys._mu + sys._lam) * gd + sys._mu * lap
-    value = mtx @ vec
+    value = mtx @ sys._state.ravel()
     assert value == pytest.approx(expected)
 
-    surf = DIM * mesh[1]
-    value = mtx[:-surf, :] @ vec
-    assert value == pytest.approx(expected[:-surf])
+    value = sys._ela @ sys._state.ravel()
+    assert value == pytest.approx(expected[: -DIM * mesh[1]])
 
-    # eye = np.eye(DIM)
-    # npoints = sys.npoints
-    # ndof = DIM * npoints
-    # grid = sys.grid()
-    # r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
-    # ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
-    # rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
-    # rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
-    # rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
-    # rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
-    # ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
-    # rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
-
-    expected = mtx[:-surf, :] @ vec # @ rot @ vec
-    value = sys._ela @ vec
-    assert value == pytest.approx(expected)
+    sys.apply_rigid_motion_projection()
+    value = sys._ela @ sys._state.ravel()
+    assert value == pytest.approx(expected[: -DIM * mesh[1]], abs=1e-4)
 
 
 def test_traction():
@@ -104,32 +88,15 @@ def test_traction():
     )
     sys = System(mesh, 1.0, 1.0, kbt=0.0, state=state)
 
-    eye = np.eye(DIM)
-    noc = sys._state # - sys._state.mean(axis=0)
-    # npoints = sys.npoints
-    # ndof = DIM * npoints
-    # prj = np.kron(np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye)
-    # assert prj @ sys._state.ravel() == pytest.approx(noc.ravel())
-
-    # grid = sys.grid()
-    # r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
-    # ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
-    # rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
-    # rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
-    # rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
-    # rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
-    # ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
-    # rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
-
     inter = Interpolation(mesh)
+    eye = np.eye(DIM)
     transform = inter.transform()
     inverse = inter.inverse()
     partial_xyz = np.array([inter.partial_x(), inter.partial_y(), inter.partial_z()])
     partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
-    noc = sys._state # (rot @ noc.ravel()).reshape(npoints, DIM)
     normals = sys.normals()
-    nabla = np.einsum("pan,nb->pab", partial[-mesh[1] :, :, :], noc)
+    nabla = np.einsum("pan,nb->pab", partial[-mesh[1] :, :, :], sys._state)
     div = np.trace(nabla, axis1=1, axis2=2)
     sym = nabla + np.swapaxes(nabla, 1, 2)
     stress = sys._lam * div[:, None, None] * eye[None, :, :] + sys._mu * sym
@@ -140,11 +107,15 @@ def test_traction():
     term2 = sys._lam * np.einsum("pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :])
     term3 = sys._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
     trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
-    value = trac @ noc.ravel()
+    value = trac @ sys._state.ravel()
     assert value == pytest.approx(expected)
 
     value = sys._trac @ sys._state.ravel()
     assert value == pytest.approx(expected)
+
+    sys.apply_rigid_motion_projection()
+    value = sys._trac @ sys._state.ravel()
+    assert value == pytest.approx(expected, abs=1e-4)
 
 
 def test_system_smoke():
