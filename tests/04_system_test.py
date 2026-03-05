@@ -53,7 +53,7 @@ def test_stress_divergence():
     transform = inter.transform()
     inverse = inter.inverse()
     partial = np.asarray([inter.partial_x(), inter.partial_y(), inter.partial_z()])
-    noc = sys._state - sys._state.mean(axis=0)
+    noc = sys._state # - sys._state.mean(axis=0)
 
     grad_div = np.einsum("lL,aLM,bMN,Nn->lanb", inverse, partial, partial, transform)
     laplacian = np.einsum("lL,bLM,bMN,Nn->ln", inverse, partial, partial, transform)
@@ -78,22 +78,21 @@ def test_stress_divergence():
     value = mtx[:-surf, :] @ vec
     assert value == pytest.approx(expected[:-surf])
 
-    eye = np.eye(DIM)
-    npoints = sys.npoints
-    ndof = DIM * npoints
-    noc = sys._state - sys._state.mean(axis=0)
-    grid = sys.grid()
-    r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
-    ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
-    rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
-    rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
-    rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
-    rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
-    ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
-    rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
+    # eye = np.eye(DIM)
+    # npoints = sys.npoints
+    # ndof = DIM * npoints
+    # grid = sys.grid()
+    # r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
+    # ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
+    # rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
+    # rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
+    # rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
+    # rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
+    # ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
+    # rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
 
-    expected = mtx[:-surf, :] @ rot @ vec
-    value = sys._ela @ sys._state.ravel()
+    expected = mtx[:-surf, :] @ vec # @ rot @ vec
+    value = sys._ela @ vec
     assert value == pytest.approx(expected)
 
 
@@ -106,21 +105,21 @@ def test_traction():
     sys = System(mesh, 1.0, 1.0, kbt=0.0, state=state)
 
     eye = np.eye(DIM)
-    npoints = sys.npoints
-    ndof = DIM * npoints
-    noc = sys._state - sys._state.mean(axis=0)
-    prj = np.kron(np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye)
-    assert prj @ sys._state.ravel() == pytest.approx(noc.ravel())
+    noc = sys._state # - sys._state.mean(axis=0)
+    # npoints = sys.npoints
+    # ndof = DIM * npoints
+    # prj = np.kron(np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye)
+    # assert prj @ sys._state.ravel() == pytest.approx(noc.ravel())
 
-    grid = sys.grid()
-    r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
-    ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
-    rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
-    rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
-    rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
-    rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
-    ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
-    rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
+    # grid = sys.grid()
+    # r = grid - grid.mean(axis=0, keepdims=True)  # center for rotations about CoM
+    # ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
+    # rot_x = np.cross(ex, r).reshape(-1)  # ω = ex
+    # rot_y = np.cross(ey, r).reshape(-1)  # ω = ey
+    # rot_z = np.cross(ez, r).reshape(-1)  # ω = ez
+    # rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
+    # ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
+    # rot = np.eye(ndof) - ortho @ ortho.T  # (ndof, ndof)
 
     inter = Interpolation(mesh)
     transform = inter.transform()
@@ -128,7 +127,7 @@ def test_traction():
     partial_xyz = np.array([inter.partial_x(), inter.partial_y(), inter.partial_z()])
     partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
-    noc = (rot @ noc.ravel()).reshape(npoints, DIM)
+    noc = sys._state # (rot @ noc.ravel()).reshape(npoints, DIM)
     normals = sys.normals()
     nabla = np.einsum("pan,nb->pab", partial[-mesh[1] :, :, :], noc)
     div = np.trace(nabla, axis1=1, axis2=2)

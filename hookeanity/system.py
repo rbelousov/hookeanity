@@ -188,25 +188,25 @@ class System:
         partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
         # Projection operators to remove translations of and rotations about CoM
-        trans = np.zeros((3 * npoints, 3), dtype=float)
-        s = 1.0 / np.sqrt(npoints)
-        trans[0::3, 0] = s  # x translation
-        trans[1::3, 1] = s  # y translation
-        trans[2::3, 2] = s  # z translation
+        # trans = np.zeros((3 * npoints, 3), dtype=float)
+        # s = 1.0 / np.sqrt(npoints)
+        # trans[0::3, 0] = s  # x translation
+        # trans[1::3, 1] = s  # y translation
+        # trans[2::3, 2] = s  # z translation
         # prj = np.kron(
         #     np.eye(npoints) - np.ones((npoints, npoints)) / npoints, eye
         # )
 
-        grid = self._grid - self._grid.mean(
-            axis=0, keepdims=True
-        )  # center for rotations about CoM
-        ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
-        rot_x = np.cross(ex, grid).reshape(-1)  # ω = ex
-        rot_y = np.cross(ey, grid).reshape(-1)  # ω = ey
-        rot_z = np.cross(ez, grid).reshape(-1)  # ω = ez
-        rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
-        ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
-        # rot = np.eye(ndof) - ortho @ ortho.T             # (ndof, ndof)
+        # grid = self._grid - self._grid.mean(
+        #     axis=0, keepdims=True
+        # )  # center for rotations about CoM
+        # ex, ey, ez = eye  # rows: [1,0,0], [0,1,0], [0,0,1]
+        # rot_x = np.cross(ex, grid).reshape(-1)  # ω = ex
+        # rot_y = np.cross(ey, grid).reshape(-1)  # ω = ey
+        # rot_z = np.cross(ez, grid).reshape(-1)  # ω = ez
+        # rot_xyz = np.column_stack([rot_x, rot_y, rot_z])  # (ndof, 3)
+        # ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
+        # # rot = np.eye(ndof) - ortho @ ortho.T             # (ndof, ndof)
 
         # Traction operator
         self.info("  elastic traction operator")
@@ -218,12 +218,13 @@ class System:
         )
         term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
         trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
-        # self._trac = trac @ rot @ ortho
-        rigid = np.column_stack(
-            [trans, ortho]
-        )  # remove rigid-body motion leakage (ndof, 6)
-        rigid, _ = np.linalg.qr(rigid, mode="reduced")  # re-orthonormalize all 6
-        self._trac = trac - (trac @ rigid) @ rigid.T
+        self._trac = trac
+        # # self._trac = trac @ rot @ ortho
+        # rigid = np.column_stack(
+        #     [trans, ortho]
+        # )  # remove rigid-body motion leakage (ndof, 6)
+        # rigid, _ = np.linalg.qr(rigid, mode="reduced")  # re-orthonormalize all 6
+        # self._trac = trac - (trac @ rigid) @ rigid.T
 
         # Stress-divergence operator
         self.info("  divergence of the elastic stress")
@@ -243,9 +244,10 @@ class System:
             transform,
         ).reshape(nbulk, ndof)  # laplacian
         ela = (self._mu + self._lam) * gd + self._mu * lap  # div stress
-        self._ela = (
-            ela - (ela @ rigid) @ rigid.T
-        )  # remove rigid-body motion leakage (ndof, 6)
+        self._ela = ela
+        # self._ela = (
+        #     ela - (ela @ rigid) @ rigid.T
+        # )  # remove rigid-body motion leakage (ndof, 6)
 
         self.info("  additive forces")
         force = np.zeros((mesh[1], DIM))
