@@ -114,6 +114,7 @@ class System:
         _force (numpy.ndarray): External point force
         _std (numpy.ndarray): Intensity of the thermal fluctuations
         verbose (bool): Trigger of logging output
+        _projected (bool): Flag indicating if rigid-body motion has been projected out
     """
 
     def __init__(
@@ -126,6 +127,7 @@ class System:
         kbt: Real = 1.0,
         state: VectorValues | None = None,
         rng: np.random.Generator | Seed | None = None,
+        projected: bool = False,
         verbose: bool = False,
         cache: str | Path | None = None,
     ):
@@ -140,6 +142,7 @@ class System:
             kbt: Effective temperature in units of energy defaults to one
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
+            projected: Whether to project out rigid-body motion in elastic operators
             verbose: Log the initialization
             cache: Path to the cached numerical data
         """
@@ -162,15 +165,19 @@ class System:
         # Initialization starts
         self.info("Initializing system")
         if cache is None:
-            self._build_operators()
+            self._build_operators(projected)
         else:
             self.info(f"  loading cached data from {cache}")
             self.load_cache(cache)
         self._std = np.sqrt(2 * self._kbt)
         self.info("System ready")
 
-    def _build_operators(self):
-        """Build operators for the equations of motion."""
+    def _build_operators(self, projected: bool):
+        """Build operators for the equations of motion.
+
+        Args:
+            projected: Whether to project out rigid-body motion in elastic operators
+        """
         # Helpers
         mesh = self._mesh
         ndof = self.ndof
@@ -226,6 +233,9 @@ class System:
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()
+        self._projected = False
+        if projected:
+            self.apply_rigid_motion_projection()
 
     def info(self, message: str):
         """Log information message in the verbose mode."""
@@ -234,6 +244,8 @@ class System:
 
     def apply_rigid_motion_projection(self):
         """Project out rigid-body motion in elastic operators."""
+        if self._projected:
+            return
         npoints = self.npoints
         ndof = self.ndof
 
@@ -269,6 +281,7 @@ class System:
         self._ela = (
             self._ela - (self._ela @ rigid) @ rigid.T
         )  # remove rigid-body motion leakage (ndof, 6)
+        self._projected = True
 
     def normals(self) -> VectorValues:
         """Return inward surface normals."""
@@ -376,6 +389,7 @@ class System:
             f.attrs["rng_state_json"] = json.dumps(
                 self._rng.bit_generator.state, default=json_default
             )
+            f.attrs["projected"] = bool(self._projected)
 
         return self
 
@@ -438,6 +452,8 @@ class System:
             cast(Any, bitgen).state = rng_state
             rng = np.random.Generator(bitgen)
 
+            projected = bool(attr_any(f, "projected"))
+
             return cls(
                 mesh=mesh,
                 lam=lam,
@@ -447,6 +463,7 @@ class System:
                 kbt=kbt,
                 state=state,
                 rng=rng,
+                projected=projected,
                 verbose=verbose,
                 cache=cache,
             )
@@ -478,6 +495,7 @@ class System:
             f.attrs["mu"] = float(self._mu)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
+            f.attrs["projected"] = bool(self._projected)
 
         return self
 
@@ -500,6 +518,7 @@ class System:
             mu = attr_float(f, "mu")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
+            self._projected = bool(attr_any(f, "projected"))
 
             assert mesh == self._mesh, (
                 "Inconsistent meshes between the system and the cache file"
