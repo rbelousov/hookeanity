@@ -1,22 +1,31 @@
+"""Utility modules for parameter conversion."""
+
 from .base import Real
 
-def young_poisson_to_lame(E: Real, nu: Real) -> tuple[Real, Real]:
-    """Convert Young's modulus (E) and Poisson ratio (nu) to Lamé parameters (mu, lambda)
 
-    Returns
-        (mu, lambda) : tuple of floats
+def young_poisson_to_lame(modulus: Real, ratio: Real) -> tuple[Real, Real]:
+    """Convert Young modulus and Poisson ratio to Lamé parameters.
+
+    Args:
+        modulus: Young modulus
+        ratio: Poisson ratio
+    Returns:
+        Lamé coefficients mu and lambda
     """
-    mu = E / (2 * (1 + nu))
-    lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+    mu = modulus / (2 * (1 + ratio))
+    lam = modulus * ratio / ((1 + modulus) * (1 - 2 * modulus))
     return mu, lam
 
 
 def lame_to_young_poisson(mu: Real, lam: Real) -> tuple[Real, Real]:
-    """Convert Lamé parameters (mu, lambda) to Young's modulus (E) and Poisson ratio (nu)
+    """Convert Lamé parameters to Young modulus and Poisson ratio.
 
+    Args:
+        mu: shear modulus
+        lam: first Lamé coefficient
     Returns
-        (E, nu) : tuple of floats
+        Young modulus and Poisson ratio
     """
-    E = mu * (3 * lam + 2 * mu) / (lam + mu)
+    modulus = mu * (3 * lam + 2 * mu) / (lam + mu)
     nu = lam / (2 * (lam + mu))
-    return E, nu
+    return modulus, nu

@@ -1,25 +1,28 @@
-import pytest
+"""Test `hookeanity.utils` module."""
 
+import pytest
 from hookeanity.utils import young_poisson_to_lame, lame_to_young_poisson
 
 
 def test_young_poisson_to_lame_known_values():
-    E = 1000.0
+    """Test Young and Poisson to Lamé conversion."""
+    modulus = 1000.0
     nu = 0.3
 
-    mu, lam = young_poisson_to_lame(E, nu)
+    mu, lam = young_poisson_to_lame(modulus, nu)
 
-    assert mu == pytest.approx(E / (2 * (1 + nu)))
-    assert lam == pytest.approx(E * nu / ((1 + nu) * (1 - 2 * nu)))
+    assert mu == pytest.approx(modulus / (2 * (1 + nu)))
+    assert lam == pytest.approx(modulus * nu / ((1 + nu) * (1 - 2 * nu)))
 
 
 def test_lame_to_young_poisson_known_values():
+    """Test Lamé to Young and Poisson conversion."""
     mu = 384.61538461538464
     lam = 576.9230769230769
 
-    E, nu = lame_to_young_poisson(mu, lam)
+    modulus, nu = lame_to_young_poisson(mu, lam)
 
-    assert E == pytest.approx(1000.0)
+    assert modulus == pytest.approx(1000.0)
     assert nu == pytest.approx(0.3)
 
 
@@ -32,11 +35,12 @@ def test_lame_to_young_poisson_known_values():
         (5000.0, 0.45),
     ],
 )
-def test_round_trip_young_poisson_to_lame_and_back(E, nu):
-    mu, lam = young_poisson_to_lame(E, nu)
+def test_round_trip_young_poisson_to_lame_and_back(modulus, nu):
+    """Test invertibility from Young and Possion."""
+    mu, lam = young_poisson_to_lame(modulus, nu)
     E_back, nu_back = lame_to_young_poisson(mu, lam)
 
-    assert E_back == pytest.approx(E)
+    assert E_back == pytest.approx(modulus)
     assert nu_back == pytest.approx(nu)
 
 
@@ -50,6 +54,7 @@ def test_round_trip_young_poisson_to_lame_and_back(E, nu):
     ],
 )
 def test_round_trip_lame_to_young_poisson_and_back(mu, lam):
+    """Test invertibility from Lamé coefficients."""
     E, nu = lame_to_young_poisson(mu, lam)
     mu_back, lam_back = young_poisson_to_lame(E, nu)
 
