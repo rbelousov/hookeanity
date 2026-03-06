@@ -149,7 +149,7 @@ class Interpolation:
         jy[..., 2] = np.cos(phi) / tmp  # if tmp > eps else 0.0
         return jy
 
-    def _jacobian_z(self, arg: Point | Grid):
+    def _jacobian_z(self, arg: Point | Grid) -> Point | VectorValues:
         """Return the derivative of spherical coordinates with respect to z.
 
         This method satisfies the signature of `VectorField`.

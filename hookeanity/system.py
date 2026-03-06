@@ -114,7 +114,6 @@ class System:
         _force (numpy.ndarray): External point force
         _std (numpy.ndarray): Intensity of the thermal fluctuations
         verbose (bool): Trigger of logging output
-        _projected (bool): Flag indicating if rigid-body motion has been projected out
     """
 
     def __init__(
@@ -127,7 +126,6 @@ class System:
         kbt: Real = 1.0,
         state: VectorValues | None = None,
         rng: np.random.Generator | Seed | None = None,
-        projected: bool = False,
         verbose: bool = False,
         cache: str | Path | None = None,
     ):
@@ -142,7 +140,6 @@ class System:
             kbt: Effective temperature in units of energy defaults to one
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
-            projected: Whether to project out rigid-body motion in elastic operators
             verbose: Log the initialization
             cache: Path to the cached numerical data
         """
@@ -165,19 +162,15 @@ class System:
         # Initialization starts
         self.info("Initializing system")
         if cache is None:
-            self._build_operators(projected)
+            self._build_operators()
         else:
             self.info(f"  loading cached data from {cache}")
             self.load_cache(cache)
         self._std = np.sqrt(2 * self._kbt)
         self.info("System ready")
 
-    def _build_operators(self, projected: bool):
-        """Build operators for the equations of motion.
-
-        Args:
-            projected: Whether to project out rigid-body motion in elastic operators
-        """
+    def _build_operators(self):
+        """Build operators for the equations of motion."""
         # Helpers
         mesh = self._mesh
         ndof = self.ndof
@@ -233,55 +226,11 @@ class System:
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()
-        self._projected = False
-        if projected:
-            self.apply_rigid_motion_projection()
 
     def info(self, message: str):
         """Log information message in the verbose mode."""
         if self.verbose:
             logger.info(message)
-
-    def apply_rigid_motion_projection(self):
-        """Project out rigid-body motion in elastic operators."""
-        if self._projected:
-            return
-        npoints = self.npoints
-        ndof = self.ndof
-
-        # Projection operators to remove translations of and rotations about CoM
-        trans = np.zeros((ndof, DIM), dtype=float)
-        s = 1.0 / np.sqrt(npoints)
-        trans[0::3, 0] = s  # x translation
-        trans[1::3, 1] = s  # y translation
-        trans[2::3, 2] = s  # z translation
-
-        # Cartesian coordinates of the grid points
-        rad = self._grid[:, 0]
-        theta = self._grid[:, 1]
-        phi = self._grid[:, 2]
-        x = rad * np.sin(theta) * np.cos(phi)
-        y = rad * np.sin(theta) * np.sin(phi)
-        z = rad * np.cos(theta)
-        pos = np.stack([x, y, z], axis=1)
-        pos -= pos.mean(axis=0, keepdims=True)
-        ex, ey, ez = np.eye(DIM)
-
-        rot_x = np.cross(ex, pos).reshape(-1)
-        rot_y = np.cross(ey, pos).reshape(-1)
-        rot_z = np.cross(ez, pos).reshape(-1)
-        rot_xyz = np.column_stack([rot_x, rot_y, rot_z])
-        ortho, _ = np.linalg.qr(rot_xyz, mode="reduced")  # (ndof, 3)
-
-        rigid = np.column_stack(
-            [trans, ortho]
-        )  # remove rigid-body motion leakage (ndof, 6)
-        rigid, _ = np.linalg.qr(rigid, mode="reduced")  # re-orthonormalize all 6
-        self._trac = self._trac - (self._trac @ rigid) @ rigid.T
-        self._ela = (
-            self._ela - (self._ela @ rigid) @ rigid.T
-        )  # remove rigid-body motion leakage (ndof, 6)
-        self._projected = True
 
     def normals(self) -> VectorValues:
         """Return inward surface normals."""
@@ -389,7 +338,6 @@ class System:
             f.attrs["rng_state_json"] = json.dumps(
                 self._rng.bit_generator.state, default=json_default
             )
-            f.attrs["projected"] = bool(self._projected)
 
         return self
 
@@ -452,8 +400,6 @@ class System:
             cast(Any, bitgen).state = rng_state
             rng = np.random.Generator(bitgen)
 
-            projected = bool(attr_any(f, "projected"))
-
             return cls(
                 mesh=mesh,
                 lam=lam,
@@ -463,7 +409,6 @@ class System:
                 kbt=kbt,
                 state=state,
                 rng=rng,
-                projected=projected,
                 verbose=verbose,
                 cache=cache,
             )
@@ -495,7 +440,6 @@ class System:
             f.attrs["mu"] = float(self._mu)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
-            f.attrs["projected"] = bool(self._projected)
 
         return self
 
@@ -518,7 +462,6 @@ class System:
             mu = attr_float(f, "mu")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
-            self._projected = bool(attr_any(f, "projected"))
 
             assert mesh == self._mesh, (
                 "Inconsistent meshes between the system and the cache file"

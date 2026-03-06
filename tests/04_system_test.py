@@ -75,10 +75,6 @@ def test_stress_divergence():
     value = sys._ela @ sys._state.ravel()
     assert value == pytest.approx(expected[: -DIM * mesh[1]])
 
-    sys.apply_rigid_motion_projection()
-    value = sys._ela @ sys._state.ravel()
-    assert value == pytest.approx(expected[: -DIM * mesh[1]], abs=1e-4)
-
 
 def test_traction():
     """Test formulas for the traction force."""
@@ -112,10 +108,6 @@ def test_traction():
 
     value = sys._trac @ sys._state.ravel()
     assert value == pytest.approx(expected)
-
-    sys.apply_rigid_motion_projection()
-    value = sys._trac @ sys._state.ravel()
-    assert value == pytest.approx(expected, abs=1e-4)
 
 
 def test_system_smoke():

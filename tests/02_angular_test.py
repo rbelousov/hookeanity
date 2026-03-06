@@ -212,12 +212,6 @@ def test_matern_interpolation():
     weights = np.full(len(angles), fibonacci_weight(len(angles)))
     inter = MaternInterpolator(angles, weights=weights)
 
-    precision = 1e-1
-    matrix = np.einsum("y,yp,yq", inter._bandfilter, inter._values, inter._values)
-    assert inter._coefficients @ matrix == pytest.approx(
-        np.eye(len(inter)), abs=precision
-    )
-
     precision = 2e-1
     sz = len(inter)
     for p in range(sz):

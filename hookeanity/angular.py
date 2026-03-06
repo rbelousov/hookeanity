@@ -173,20 +173,18 @@ class MaternInterpolator:
     """Sobolev-Matérn interpolator.
 
     Attributes:
+        _nodes (numpy.typing.NDArray[numpy.floating]): Interpolation nodes
+        _smoothness (float): Smoothness parameter of the interpolation
         _lmax (int): Maximum order of the spherical harmonic expansion
-        _bandfilter (numpy.typing.NDArray[numpy.floating]): Band-limiting filter for the spherical harmonic expansion
-        _values (numpy.typing.NDArray[numpy.floating]): Values of the spherical harmonics at the interpolation nodes
-        _theta (numpy.typing.NDArray[numpy.floating]): Values of the spherical harmonic derivatives with respect to the polar angle at the interpolation nodes
-        _phi (numpy.typing.NDArray[numpy.floating]): Values of the spherical harmonic derivatives with respect to the azimuthal angle at the interpolation nodes
         _weights (numpy.typing.NDArray[numpy.floating]): Quadrature weights for the interpolation nodes
-        _coefficients (numpy.typing.NDArray[numpy.floating]): Coefficients of the cardinal functions in the Matérn kernel basis
+        _oper (numpy.NDArray[numpy.floating]): Coefficients of cardinal basis functions in the spherical-harmonic basis
     """
 
     def __init__(
         self,
         nodes: NDArray[np.floating],
         weights: NDArray[np.floating] | None = None,
-        smoothness: float = 3.0,
+        smoothness: Real = 3.0,
         lmax: int | None = None,
     ):
         """Initialize interpolator over the given nodes.
@@ -200,27 +198,25 @@ class MaternInterpolator:
             lmax: Order of kernel expansion defaults to the square root of the number of particles
         """
         sz = len(nodes)
+        self._nodes = np.array(nodes)
+        self._smoothness = float(smoothness)
         self._lmax = np.sqrt(sz).astype(int) if lmax is None else lmax
         self._weights = (
             np.ones(sz, dtype=float)
             if weights is None
             else np.array(weights, dtype=float)
         )
-        grain = 4 * np.pi / sz
-        self._bandfilter = np.array(
-            [
-                (1 + ell * (ell + 1) * grain) ** -(1 + smoothness)
-                for ell in range(self._lmax + 1)
-                for m in range(-ell, ell + 1)
-            ]
-        )
 
+        bandfilter = self.bandfilter()
         basis = list(self.basis())
-        self._values = np.array([sh(nodes) for sh in basis])
-        self._theta = np.array([sh.partial_theta(nodes) for sh in basis])
-        self._phi = np.array([sh.partial_phi(nodes) for sh in basis])
-        self._coefficients = np.linalg.pinv(
-            np.einsum("y,yp,yq", self._bandfilter, self._values, self._values)
+        values = np.array([sh(nodes) for sh in basis])
+        coefficients = np.linalg.pinv(np.einsum("y,yp,yq", bandfilter, values, values))
+        self._oper = np.einsum(
+            "n,y,nq,yq->ny",
+            1 / np.sqrt(self._weights),
+            bandfilter,
+            coefficients,
+            values,
         )
 
     def basis(self) -> Iterator[SphericalHarmonic]:
@@ -229,26 +225,22 @@ class MaternInterpolator:
             for m in range(-ell, ell + 1):
                 yield SphericalHarmonic((ell, m))
 
+    def bandfilter(self) -> NDArray[np.floating]:
+        """Return band-limiting filter."""
+        grain = 4 * np.pi / len(self._nodes)
+        return np.array(
+            [
+                (1 + ell * (ell + 1) * grain) ** -(1 + self._smoothness)
+                for ell in range(self._lmax + 1)
+                for m in range(-ell, ell + 1)
+            ]
+        )
+
     def __getitem__(self, index):
         """Return cardinal function associated with the given point index."""
 
         def wrapper(angles: ArrayLike) -> NDArray[np.floating] | np.floating:
-            if np.asarray(angles).ndim == 1:
-                return np.einsum(
-                    "y,q,yq,y",
-                    self._bandfilter,
-                    self._coefficients[index],
-                    self._values,
-                    [sh(angles) for sh in self.basis()],
-                ) / np.sqrt(self._weights[index])
-
-            return np.einsum(
-                "y,q,yq,yp",
-                self._bandfilter,
-                self._coefficients[index],
-                self._values,
-                [sh(angles) for sh in self.basis()],
-            ) / np.sqrt(self._weights[index])
+            return self._oper[index] @ [sh(angles) for sh in self.basis()]
 
         return wrapper
 
@@ -258,7 +250,7 @@ class MaternInterpolator:
 
     def __len__(self):
         """Return number of cardinal functions."""
-        return self._values.shape[1]
+        return len(self._nodes)
 
     def chi(
         self, angles: ArrayLike | None = None
@@ -275,24 +267,7 @@ class MaternInterpolator:
             return np.eye(len(self)) / np.sqrt(self._weights)
 
         angles = np.asarray(angles)
-        if angles.ndim == 1:
-            return np.einsum(
-                "r,rp,y,yp,y->r",
-                1 / np.sqrt(self._weights),  # r
-                self._coefficients,  # rp
-                self._bandfilter,  # y
-                self._values,  # yp
-                [sh(angles) for sh in self.basis()],
-            )
-
-        return np.einsum(
-            "r,rp,y,yp,yq->rq",
-            1 / np.sqrt(abs(self._weights)),  # r
-            self._coefficients,  # rp
-            self._bandfilter,  # y
-            self._values,  # yp
-            [sh(angles) for sh in self.basis()],
-        )
+        return self._oper @ [sh(angles) for sh in self.basis()]
 
     def chi_theta(
         self, angles: ArrayLike | None = None
@@ -305,35 +280,9 @@ class MaternInterpolator:
         Returns:
             Derivatives of the cardinal functions with respect to the polar angle at the given angles
         """
-        if angles is None:
-            return np.einsum(
-                "r,rp,y,yp,yq->rq",
-                1 / np.sqrt(abs(self._weights)),  # r
-                self._coefficients,  # rp
-                self._bandfilter,  # y
-                self._values,  # yp
-                self._theta,  # yq
-            )
-
-        angles = np.asarray(angles)
-        if angles.ndim == 1:
-            return np.einsum(
-                "r,rp,y,yp,y->r",
-                1 / np.sqrt(self._weights),  # r
-                self._coefficients,  # rp
-                self._bandfilter,  # y
-                self._values,  # yp
-                [sh.partial_theta(angles) for sh in self.basis()],
-            )
-
-        return np.einsum(
-            "r,rp,y,yp,yq->rq",
-            1 / np.sqrt(abs(self._weights)),  # r
-            self._coefficients,  # rp
-            self._bandfilter,  # y
-            self._values,  # yp
-            [sh.partial_theta(angles) for sh in self.basis()],
-        )
+        angles = self._nodes if angles is None else np.asarray(angles)
+        f_theta = np.array([sh.partial_theta(angles) for sh in self.basis()])
+        return self._oper @ f_theta
 
     def chi_phi(
         self, angles: ArrayLike | None = None
@@ -346,35 +295,9 @@ class MaternInterpolator:
         Returns:
             Derivatives of the cardinal functions with respect to the azimuthal angle at the given angles
         """
-        if angles is None:
-            return np.einsum(
-                "r,rp,y,yp,yq->rq",
-                1 / np.sqrt(abs(self._weights)),  # r
-                self._coefficients,  # rp
-                self._bandfilter,  # y
-                self._values,  # yp
-                self._phi,  # yq
-            )
-
-        angles = np.asarray(angles)
-        if angles.ndim == 1:
-            return np.einsum(
-                "r,rp,y,yp,y->r",
-                1 / np.sqrt(self._weights),  # r
-                self._coefficients,  # rp
-                self._bandfilter,  # y
-                self._values,  # yp
-                [sh.partial_phi(angles) for sh in self.basis()],
-            )
-
-        return np.einsum(
-            "r,rp,y,yp,yq->rq",
-            1 / np.sqrt(abs(self._weights)),  # r
-            self._coefficients,  # rp
-            self._bandfilter,  # y
-            self._values,  # yp
-            [sh.partial_phi(angles) for sh in self.basis()],
-        )
+        angles = self._nodes if angles is None else np.asarray(angles)
+        f_phi = np.array([sh.partial_phi(angles) for sh in self.basis()])
+        return self._oper @ f_phi
 
     def partial_theta(self):
         """Return matrix form of the derivative operator with respect to theta."""
