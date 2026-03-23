@@ -10,11 +10,11 @@ def young_poisson_to_lame(modulus: Real, ratio: Real) -> tuple[Real, Real]:
         modulus: Young modulus
         ratio: Poisson ratio
     Returns:
-        Lamé coefficients mu and lambda
+        Lamé coefficients lambda and mu
     """
+    lam = modulus * ratio / ((1 + ratio) * (1 - 2 * ratio))
     mu = modulus / (2 * (1 + ratio))
-    lam = modulus * ratio / ((1 + modulus) * (1 - 2 * modulus))
-    return mu, lam
+    return lam, mu
 
 
 def lame_to_young_poisson(mu: Real, lam: Real) -> tuple[Real, Real]:
