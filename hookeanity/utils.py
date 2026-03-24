@@ -17,7 +17,7 @@ def young_poisson_to_lame(modulus: Real, ratio: Real) -> tuple[Real, Real]:
     return lam, mu
 
 
-def lame_to_young_poisson(mu: Real, lam: Real) -> tuple[Real, Real]:
+def lame_to_young_poisson(lam: Real, mu: Real, ) -> tuple[Real, Real]:
     """Convert Lamé parameters to Young modulus and Poisson ratio.
 
     Args:
