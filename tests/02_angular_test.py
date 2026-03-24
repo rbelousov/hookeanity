@@ -207,7 +207,7 @@ def test_legendre(simple_grid):
 
 
 def test_matern_interpolation():
-    """Test `MaternInterpolator`"""
+    """Test `MaternInterpolator`."""
     angles = fibonacci_points(100)
     weights = np.full(len(angles), fibonacci_weight(len(angles)))
     inter = MaternInterpolator(angles, weights=weights)

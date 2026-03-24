@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 tests = ["pytest"]
-dev = ["pytest", "docformatter", "ruff", "pyright"]
+dev = ["pytest", "pydocstringformatter", "ruff", "pyright"]
 doc = ["mkdocs", "mkdocstrings[python]", "mkdocs-material"]
 examples = ["matplotlib", "jupyterlab", "ipywidgets", "tqdm", "pillow"]
 
@@ -32,6 +32,9 @@ packages = ["hookeanity"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.pydocstringformatter]
+write = true
 
 [tool.ruff]
 src = ["hookeanity", "tests"]
@@ -44,10 +47,3 @@ ignore = [
   "D213",  # summary on first line (keep D212)
   "D400", "D413", "D415", # Summary without period
 ]
-
-[tool.docformatter]
-recursive = true
-in-place = true
-
-wrap-summaries = 88
-wrap-descriptions = 88

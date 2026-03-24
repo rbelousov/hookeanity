@@ -8,7 +8,7 @@ from hookeanity.radial import jacobi_radau_quadrature, RadialPolynomial
 
 
 def test_jacobi_radau_quadrature():
-    """Test `jacobi_radau_quadrature()`"""
+    """Test `jacobi_radau_quadrature()`."""
     num = 5
     nodes, weights = jacobi_radau_quadrature(num)
     assert len(nodes) == num
@@ -27,7 +27,7 @@ def test_jacobi_radau_quadrature():
 
 
 def test_radial_polynomial():
-    """Test `RadialPolynomial`"""
+    """Test `RadialPolynomial`."""
     num = 5
     nodes, weights = RadialPolynomial.quadrature(num - 1)
     assert RadialPolynomial(0)(nodes) == pytest.approx(np.full_like(nodes, np.sqrt(3)))
