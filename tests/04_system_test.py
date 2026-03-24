@@ -136,6 +136,9 @@ def test_system_smoke():
     sys_s(dt)(dt)(dt)
     assert not (sys_n._state == pytest.approx(sys_s._state))
 
+    sys_s(dt, method="trotter")
+    assert np.isfinite(sys_n._state).all()
+
     sys_n(dt, method="strang")
     assert np.isfinite(sys_n._state).all()
 

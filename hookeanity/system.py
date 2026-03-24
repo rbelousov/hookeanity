@@ -294,6 +294,8 @@ class System:
             self._state = self._euler_step(dt)
         elif method == "strang":
             self._state = self._strang_step(dt)
+        elif method == "trotter":
+            self._state = self._trotter_step(dt)
         else:
             raise ValueError(f"Unknown integration method: {method!r}")
 
@@ -338,23 +340,19 @@ class System:
         self._solve_bulk(vec)
         return vec.reshape(self.npoints, DIM)
 
-    def _strang_step(self, dt: Real) -> VectorValues:
-        """Perform one Strang splitting integration step.
+    def _traction_operator(self, time: Real) -> tuple[LinearOperator, Real]:
+        """Construct the traction operator for the exponential integrators.
 
         Args:
-            dt: Integration time step
+            time: Time factor for the operator
 
         Returns:
-            Updated state vector after one Strang splitting step
+            The traction operator and its trace
         """
         ndof = self.ndof
         nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
         surf = slice(-nsurf, None)  # surface selector
-        tf = dt / self._gamma  # time factor
-        vec = self.state().ravel()  # State Vector
-
-        # Surface step
-        trac_exp = self._trac * (tf / 2)
+        trac_exp = self._trac * time
 
         def matvec(x):
             x = np.asarray(x).reshape(-1)
@@ -366,21 +364,60 @@ class System:
             x = np.asarray(x).reshape(-1)
             return trac_exp.T @ x[surf]
 
-        def matmat(X):
-            X = np.asarray(X)
-            Y = np.zeros((ndof, X.shape[1]), dtype=X.dtype)
-            Y[surf, :] = trac_exp @ X
-            return Y
+        def matmat(x):
+            x = np.asarray(x)
+            y = np.zeros((ndof, x.shape[1]), dtype=x.dtype)
+            y[surf, :] = trac_exp @ x
+            return y
 
         trace = np.trace(trac_exp[:, surf])
-        oper = cast(Any, LinearOperator)(
+        return cast(Any, LinearOperator)(
             shape=(ndof, ndof),
             matvec=matvec,
             rmatvec=rmatvec,
             matmat=matmat,
             dtype=float,
-        )
+        ), trace
 
+    def _trotter_step(self, dt: Real) -> VectorValues:
+        """Perform one Trotter splitting integration step.
+
+        Args:
+            dt: Integration time step
+
+        Returns:
+            Updated state vector after one Trotter splitting step
+        """
+        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
+        surf = slice(-nsurf, None)  # surface selector
+        tf = dt / self._gamma  # time factor
+        oper, trace = self._traction_operator(tf)
+
+        vec = self.state().ravel()  # State Vector
+        vec = expm_multiply(oper, vec, traceA=trace)
+        self._solve_bulk(vec)
+
+        flu = (np.sqrt(tf) * self._std) * self._rng.normal(size=nsurf)
+        vec[surf] += flu + self._force * tf
+        self._solve_bulk(vec)
+
+        return vec.reshape(self.npoints, DIM)
+
+    def _strang_step(self, dt: Real) -> VectorValues:
+        """Perform one Strang splitting integration step.
+
+        Args:
+            dt: Integration time step
+
+        Returns:
+            Updated state vector after one Strang splitting step
+        """
+        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
+        surf = slice(-nsurf, None)  # surface selector
+        tf = dt / self._gamma  # time factor
+        oper, trace = self._traction_operator(tf / 2)
+
+        vec = self.state().ravel()  # State Vector
         vec = expm_multiply(oper, vec, traceA=trace)
         self._solve_bulk(vec)
 
@@ -390,8 +427,6 @@ class System:
 
         vec = expm_multiply(oper, vec, traceA=trace)
         self._solve_bulk(vec)
-
-        # Bulk step
         return vec.reshape(self.npoints, DIM)
 
     def save(self, filepath: str | Path) -> Self:
