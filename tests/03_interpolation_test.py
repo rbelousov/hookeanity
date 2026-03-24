@@ -133,7 +133,7 @@ def random_points(n: int, sz: int) -> np.ndarray:
 
 
 def test_transform():
-    """Test `Interpolation.transform()` and `Interpolation.inverse()`"""
+    """Test `Interpolation.transform()` and `Interpolation.inverse()`."""
     inter = Interpolation((5, 5))
     sz = len(inter)
     shape = (sz, sz)
@@ -145,7 +145,7 @@ def test_transform():
 
 
 def test_partial_r(scalar, scalar_r):
-    """Test `Interpolation.partial_r`"""
+    """Test `Interpolation.partial_r`."""
     inter = Interpolation((5, 5))
     grid = inter.grid()
     values = scalar(grid)
@@ -161,7 +161,7 @@ def test_partial_r(scalar, scalar_r):
 
 
 def test_partial_theta(scalar, scalar_theta):
-    """Test `Interpolation.partial_theta`"""
+    """Test `Interpolation.partial_theta`."""
     inter = Interpolation((12, 144))
     grid = inter.grid()
 
@@ -177,7 +177,7 @@ def test_partial_theta(scalar, scalar_theta):
 
 
 def test_partial_phi(scalar, scalar_phi):
-    """Test `Interpolation.partial_phi`"""
+    """Test `Interpolation.partial_phi`."""
     inter = Interpolation((12, 144))
     grid = inter.grid()
 
@@ -317,7 +317,7 @@ def test_z_identity():
 
 
 def test_partial_x(scalar, scalar_x):
-    """Test `Interpolation.partial_x`"""
+    """Test `Interpolation.partial_x`."""
     inter = Interpolation((12, 144))
     grid = inter.grid()
     precision_abs = 2e-1
@@ -334,7 +334,7 @@ def test_partial_x(scalar, scalar_x):
 
 
 def test_partial_y(scalar, scalar_y):
-    """Test `Interpolation.partial_y`"""
+    """Test `Interpolation.partial_y`."""
     inter = Interpolation((12, 144))
     grid = inter.grid()
     precision_abs = 2e-1
@@ -351,7 +351,7 @@ def test_partial_y(scalar, scalar_y):
 
 
 def test_partial_z(scalar, scalar_z):
-    """Test `Interpolation.partial_z`"""
+    """Test `Interpolation.partial_z`."""
     inter = Interpolation((12, 144))
     precision_abs = 2e-1
 

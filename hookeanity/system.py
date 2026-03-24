@@ -99,6 +99,7 @@ class System:
     """Simulated system.
 
     Attributes:
+        _gamma (hookeanity.Real): Effective dissipative coefficient
         _lam (hookeanity.Real): Lamé lambda coefficient
         _mu (hookeanity.Real): Lamé mu coefficient
         _ext (hookeanity.Real): Magnitude of the external point force
@@ -124,6 +125,7 @@ class System:
         f_ext: Real = 0.0,
         f_loc: tuple[Real, Real] = (0.0, 0.0),
         kbt: Real = 1.0,
+        gamma: Real = 1.0,
         state: VectorValues | None = None,
         rng: np.random.Generator | Seed | None = None,
         verbose: bool = False,
@@ -138,12 +140,14 @@ class System:
             f_ext: Magnitude of the external force defaults to zero
             f_loc: Solid angle specifying the location of the external point force
             kbt: Effective temperature in units of energy defaults to one
+            gamma: Effective dissipative coefficient
             state: Current state of the system defaults to zeros
             rng: Optional state of the random number generator or seed
             verbose: Log the initialization
             cache: Path to the cached numerical data
         """
         self._mesh = mesh
+        self._gamma = gamma
         self._lam = lam
         self._mu = mu
         self._ext = f_ext
@@ -289,13 +293,13 @@ class System:
         vec = self.state().ravel()  # State Vector
 
         # Surface step
+        tf = dt / self._gamma  # time factor
         traction = self._trac @ vec
-        flu = (np.sqrt(dt) * self._std) * self._rng.normal(size=nsurf)
-        vec[surf] += dt * (traction + self._force) + flu
+        flu = (np.sqrt(tf) * self._std) * self._rng.normal(size=nsurf)
+        vec[surf] += (traction + self._force) * tf + flu
 
         # Bulk step
         vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
-        # vec[bulk] = -self._ela_pinv @ self._ela_surf @ vec[surf]
 
         self._state = vec.reshape(self.npoints, DIM)
         return self
@@ -329,6 +333,7 @@ class System:
 
             # Metadata as attributes
             f.attrs["mesh"] = self.mesh
+            f.attrs["gamma"] = float(self._gamma)
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
             f.attrs["f_ext"] = float(self._ext)
@@ -379,6 +384,7 @@ class System:
         with h5py.File(filepath, "r") as f:
             mesh = attr_mesh(f)
 
+            gamma = attr_float(f, "gamma")
             lam = attr_float(f, "lambda")
             mu = attr_float(f, "mu")
             f_ext = attr_float(f, "f_ext")
@@ -407,6 +413,7 @@ class System:
                 f_ext=f_ext,
                 f_loc=f_loc,
                 kbt=kbt,
+                gamma=gamma,
                 state=state,
                 rng=rng,
                 verbose=verbose,

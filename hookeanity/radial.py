@@ -82,7 +82,7 @@ def jacobi_radau_quadrature(
 
 
 class RadialPolynomial:
-    """Jacobi (0,2)-polynomial shifted and orthonormalized on the interval [0, 1]
+    """Jacobi (0,2)-polynomial shifted and orthonormalized on the interval [0, 1].
 
     These polynomials are suitable for numerical integration with respect to the radial component of the spherical
     coordinates.
