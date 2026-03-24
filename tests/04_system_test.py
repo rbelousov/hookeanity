@@ -136,6 +136,9 @@ def test_system_smoke():
     sys_s(dt)(dt)(dt)
     assert not (sys_n._state == pytest.approx(sys_s._state))
 
+    sys_n(dt, method="strang")
+    assert np.isfinite(sys_n._state).all()
+
 
 def test_system_cache(tmp_path):
     """Test saving and loading cache data for `System` objects."""

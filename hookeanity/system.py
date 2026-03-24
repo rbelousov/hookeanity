@@ -6,6 +6,7 @@ Attributes:
 
 from typing import cast, Any, Self, TypeAlias
 import numpy as np
+from scipy.sparse.linalg import expm_multiply, LinearOperator
 from numpy.typing import NDArray
 from .interpolation import Interpolation
 from .base import DIM, Real, Grid, VectorValues, instance
@@ -110,8 +111,7 @@ class System:
         _inter (hookeanity.interpolation.Interpolation): Interpolation utilities
         _rng (numpy.random.Generator): Numpy random-number generator
         _trac (numpy.ndarray): Matrix operator of the elastic traction force
-        _ela_surf (numpy.ndarray): Matrix operator of the divergence of the elastic stress on the surface
-        _ela_bulk (numpy.ndarray): Matrix operator of the divergence of the elastic stress in the bulk
+        _ela (numpy.ndarray): Matrix operator of the divergence of the elastic stress
         _force (numpy.ndarray): External point force
         _std (numpy.ndarray): Intensity of the thermal fluctuations
         verbose (bool): Trigger of logging output
@@ -277,32 +277,122 @@ class System:
         """Return surface points of the grid."""
         return np.array(self.grid()[-self.mesh[1] :])
 
-    def __call__(self, dt: Real) -> Self:
-        """Euler-Maruyama integration step.
+    def __call__(self, dt: Real, method: str = "euler") -> Self:
+        """Integration step.
+
+        Args:
+            dt: Integration time step
+            method: Integration method (euler, trotter, strang)
+
+        Returns:
+            Updated system after one integration step
+
+        Raises:
+            ValueError: On unknown integration method
+        """
+        if method == "euler":
+            self._state = self._euler_step(dt)
+        elif method == "strang":
+            self._state = self._strang_step(dt)
+        else:
+            raise ValueError(f"Unknown integration method: {method!r}")
+
+        return self
+
+    def _solve_bulk(self, vec: np.ndarray) -> np.ndarray:
+        """Solve the bulk equilibrium equations for the given surface state.
+
+        Args:
+            vec: Flat vector of displacements for all the degrees of freedom
+
+        Returns:
+            Updated degrees of freedom
+        """
+        nsurf = DIM * self.mesh[1]  # number of surface DoFs
+        bulk = slice(None, -nsurf)  # bulk selector
+        surf = slice(-nsurf, None)  # surface selector
+
+        vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
+        return vec
+
+    def _euler_step(self, dt: Real) -> VectorValues:
+        """Perform one Euler-Maruyama integration step.
 
         Args:
             dt: Integration time step
 
         Returns:
-            Updated system after one integration step.
+            Updated state vector after one Euler-Maruyama step.
         """
-        mesh = self.mesh
-        nsurf = DIM * mesh[1]  # nuber of surface DoFs
-        bulk = slice(None, -nsurf)  # bulk selector
+        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
         surf = slice(-nsurf, None)  # surface selector
         vec = self.state().ravel()  # State Vector
+        tf = dt / self._gamma  # time factor
 
         # Surface step
-        tf = dt / self._gamma  # time factor
         traction = self._trac @ vec
         flu = (np.sqrt(tf) * self._std) * self._rng.normal(size=nsurf)
         vec[surf] += (traction + self._force) * tf + flu
 
         # Bulk step
-        vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
+        self._solve_bulk(vec)
+        return vec.reshape(self.npoints, DIM)
 
-        self._state = vec.reshape(self.npoints, DIM)
-        return self
+    def _strang_step(self, dt: Real) -> VectorValues:
+        """Perform one Strang splitting integration step.
+
+        Args:
+            dt: Integration time step
+
+        Returns:
+            Updated state vector after one Strang splitting step
+        """
+        ndof = self.ndof
+        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
+        surf = slice(-nsurf, None)  # surface selector
+        tf = dt / self._gamma  # time factor
+        vec = self.state().ravel()  # State Vector
+
+        # Surface step
+        trac_exp = self._trac * (tf / 2)
+
+        def matvec(x):
+            x = np.asarray(x).reshape(-1)
+            y = np.zeros(ndof, dtype=x.dtype)
+            y[surf] = trac_exp @ x
+            return y
+
+        def rmatvec(x):
+            x = np.asarray(x).reshape(-1)
+            return trac_exp.T @ x[surf]
+
+        def matmat(X):
+            X = np.asarray(X)
+            Y = np.zeros((ndof, X.shape[1]), dtype=X.dtype)
+            Y[surf, :] = trac_exp @ X
+            return Y
+
+        trace = np.trace(trac_exp[:, surf])
+        oper = cast(Any, LinearOperator)(
+            shape=(ndof, ndof),
+            matvec=matvec,
+            rmatvec=rmatvec,
+            matmat=matmat,
+            dtype=float,
+        )
+
+        vec = expm_multiply(oper, vec, traceA=trace)
+        self._solve_bulk(vec)
+
+        flu = (np.sqrt(tf) * self._std) * self._rng.normal(size=nsurf)
+        vec[surf] += flu + self._force * tf
+        self._solve_bulk(vec)
+
+        vec = expm_multiply(oper, vec, traceA=trace)
+        self._solve_bulk(vec)
+
+        # Bulk step
+        return vec.reshape(self.npoints, DIM)
 
     def save(self, filepath: str | Path) -> Self:
         """Save system data into an HDF5 file.
