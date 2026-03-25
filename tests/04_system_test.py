@@ -10,7 +10,7 @@ from hookeanity.interpolation import Interpolation
 def test_system_init():
     """Test `hookeanity.System` initialization."""
     mesh = (5, 6)
-    sys = System(mesh, 1.0, 1.0)
+    sys = System(mesh, 1.0, 1.0, 1-2)
     assert sys._state.shape == (np.prod(mesh), DIM)
     assert np.all(sys._state == 0)
 
@@ -21,10 +21,11 @@ def test_save_and_load(tmp_path):
 
     lam = 2.0
     mu = 3.0
+    dt = 1e-2
     f_ext = 0.5
     kbt = 1.5
     mesh = (5, 6)
-    system = System(mesh, lam, mu, f_ext, kbt=kbt)
+    system = System(mesh, lam, mu, dt, f_ext, kbt=kbt)
     system.save(filepath)
     sample1 = system._rng.random(5)
     assert system.mesh == mesh
@@ -36,8 +37,10 @@ def test_save_and_load(tmp_path):
     assert loaded.mesh == mesh
     assert loaded._lam == lam
     assert loaded._mu == mu
+    assert loaded._dt == dt
     assert loaded._ext == f_ext
     assert loaded._kbt == kbt
+    assert loaded._method == "euler"
     assert np.all(sample1 == sample2)
 
 
@@ -47,7 +50,7 @@ def test_stress_divergence():
     state = np.random.default_rng(0).uniform(
         low=-1e-3, high=1e-3, size=(np.prod(mesh), DIM)
     )
-    sys = System(mesh, 1.0, 1.0, kbt=0.0, state=state)
+    sys = System(mesh, 1.0, 1.0, 1e-2, kbt=0.0, state=state)
 
     inter = Interpolation(mesh)
     transform = inter.transform()
@@ -82,7 +85,7 @@ def test_traction():
     state = np.random.default_rng(0).uniform(
         low=-1e-3, high=1e-3, size=(np.prod(mesh), DIM)
     )
-    sys = System(mesh, 1.0, 1.0, kbt=0.0, state=state)
+    sys = System(mesh, 1.0, 1.0, 1e-2, kbt=0.0, state=state)
 
     inter = Interpolation(mesh)
     eye = np.eye(DIM)
@@ -115,42 +118,44 @@ def test_system_smoke():
     mesh = (5, 10)
     dt = 1e-2
 
-    sys = System(mesh, 1.0, 1.0, kbt=0.0)
+    sys = System(mesh, 1.0, 1.0, dt, kbt=0.0)
     assert sys._kbt == 0.0
-    assert sys(dt)._state.shape == (np.prod(mesh), DIM)
+    assert sys()._state.shape == (np.prod(mesh), DIM)
     assert np.all(sys._state == 0)
 
     sys._state += 1
     assert np.all(sys._state == 1)
-    assert sys(dt)._state.shape == (np.prod(mesh), DIM)
+    assert sys()._state.shape == (np.prod(mesh), DIM)
     assert sys._state == pytest.approx(1, abs=1e-3)
 
-    sys = System(mesh, 1.0, 1.0, verbose=True)(dt)
+    sys = System(mesh, 1.0, 1.0, dt, verbose=True)()
     assert sys._kbt == 1
     assert sys._state != pytest.approx(1, abs=1e-3)
 
-    sys_n = System(mesh, 1.0, 1.0, f_ext=10, f_loc=(0, 0), kbt=0.0)
-    sys_s = System(mesh, 1.0, 1.0, f_ext=10, f_loc=(np.pi, 0), kbt=0.0)
+    sys_n = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0)
+    sys_s = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(np.pi, 0), kbt=0.0)
     assert not (sys_n._force == pytest.approx(sys_s._force))
-    sys_n(dt)(dt)(dt)
-    sys_s(dt)(dt)(dt)
+    sys_n()()()
+    sys_s()()()
     assert not (sys_n._state == pytest.approx(sys_s._state))
 
-    sys_s(dt, method="trotter")
-    assert np.isfinite(sys_n._state).all()
+    sys_trotter = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(np.pi, 0), kbt=0.0, method="trotter")
+    sys_trotter()
+    assert np.isfinite(sys_trotter._state).all()
 
-    sys_n(dt, method="strang")
-    assert np.isfinite(sys_n._state).all()
+    sys_strang = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0, method="strang")
+    sys_strang()
+    assert np.isfinite(sys_strang._state).all()
 
 
 def test_system_cache(tmp_path):
     """Test saving and loading cache data for `System` objects."""
     mesh = (5, 6)
     cache = tmp_path / "cache.5x6.l2m3.h5"
-    sys1 = System(mesh, 2.0, 3.0)
+    sys1 = System(mesh, 2.0, 3.0, 1e-2)
     sys1.save_cache(cache)
 
-    sys2 = System(mesh, 2.0, 3.0, cache=cache)
+    sys2 = System(mesh, 2.0, 3.0, 1e-2, cache=cache)
     assert np.all(sys1._grid == sys2._grid)
     assert np.all(sys1._trac == sys2._trac)
     assert np.all(sys1._ela == sys2._ela)

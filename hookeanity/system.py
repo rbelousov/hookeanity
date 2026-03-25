@@ -111,9 +111,12 @@ class System:
         _inter (hookeanity.interpolation.Interpolation): Interpolation utilities
         _rng (numpy.random.Generator): Numpy random-number generator
         _trac (numpy.ndarray): Matrix operator of the elastic traction force
+        _trac_oper (numpy.ndarray): Matrix operator for the elastic traction force Trotter or Strang methods
         _ela (numpy.ndarray): Matrix operator of the divergence of the elastic stress
         _force (numpy.ndarray): External point force
         _std (numpy.ndarray): Intensity of the thermal fluctuations
+        _method (str): Integration method adopted for the time step
+        _dt (hookeanity.Real): Integration time step
         verbose (bool): Trigger of logging output
     """
 
@@ -122,11 +125,13 @@ class System:
         mesh: tuple[int, int],
         lam: Real,
         mu: Real,
+        dt: Real,
         f_ext: Real = 0.0,
         f_loc: tuple[Real, Real] = (0.0, 0.0),
         kbt: Real = 1.0,
         gamma: Real = 1.0,
         state: VectorValues | None = None,
+        method: str = "euler",
         rng: np.random.Generator | Seed | None = None,
         verbose: bool = False,
         cache: str | Path | None = None,
@@ -137,22 +142,29 @@ class System:
             mesh: Number of radial and angular grid points
             lam: Lamé's first parameter
             mu: Lamé's second parameter (shear modulus)
+            dt: Integration time step 
             f_ext: Magnitude of the external force defaults to zero
             f_loc: Solid angle specifying the location of the external point force
             kbt: Effective temperature in units of energy defaults to one
             gamma: Effective dissipative coefficient
             state: Current state of the system defaults to zeros
+            method: Integration method (euler, trotter, strang)
             rng: Optional state of the random number generator or seed
             verbose: Log the initialization
             cache: Path to the cached numerical data
         """
+        if method not in {"euler", "strang", "trotter"}:
+            raise ValueError(f"Unknown integration method: {method!r}.")
+        
         self._mesh = mesh
         self._gamma = gamma
         self._lam = lam
         self._mu = mu
+        self._dt = dt
         self._ext = f_ext
         self._loc = f_loc
         self._kbt = kbt
+        self._method = method
         self._state = (
             np.zeros((np.prod(mesh), DIM)) if state is None else np.array(state)
         )
@@ -170,8 +182,18 @@ class System:
         else:
             self.info(f"  loading cached data from {cache}")
             self.load_cache(cache)
+
+        if self._method == "trotter":
+            self.info("  trotter elastic traction operator")
+            tf = self._dt / self._gamma  # time factor
+            self._trac_oper, self._trace = self._traction_operator(tf)
+        elif self._method == "strang":
+            self.info("  strang elastic traction operator")
+            tf = self._dt / self._gamma  # time factor
+            self._trac_oper, self._trace = self._traction_operator(tf / 2)
+        
         self._std = np.sqrt(2 * self._kbt)
-        self.info("System ready")
+        self.info("System ready")       
 
     def _build_operators(self):
         """Build operators for the equations of motion."""
@@ -277,27 +299,18 @@ class System:
         """Return surface points of the grid."""
         return np.array(self.grid()[-self.mesh[1] :])
 
-    def __call__(self, dt: Real, method: str = "euler") -> Self:
+    def __call__(self) -> Self:
         """Integration step.
-
-        Args:
-            dt: Integration time step
-            method: Integration method (euler, trotter, strang)
 
         Returns:
             Updated system after one integration step
-
-        Raises:
-            ValueError: On unknown integration method
         """
-        if method == "euler":
-            self._state = self._euler_step(dt)
-        elif method == "strang":
-            self._state = self._strang_step(dt)
-        elif method == "trotter":
-            self._state = self._trotter_step(dt)
-        else:
-            raise ValueError(f"Unknown integration method: {method!r}")
+        if self._method == "euler":
+            self._state = self._euler_step()
+        elif self._method == "strang":
+            self._state = self._strang_step()
+        elif self._method == "trotter":
+            self._state = self._trotter_step()
 
         return self
 
@@ -317,7 +330,7 @@ class System:
         vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
         return vec
 
-    def _euler_step(self, dt: Real) -> VectorValues:
+    def _euler_step(self) -> VectorValues:
         """Perform one Euler-Maruyama integration step.
 
         Args:
@@ -329,7 +342,7 @@ class System:
         nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
         surf = slice(-nsurf, None)  # surface selector
         vec = self.state().ravel()  # State Vector
-        tf = dt / self._gamma  # time factor
+        tf = self._dt / self._gamma  # time factor
 
         # Surface step
         traction = self._trac @ vec
@@ -340,11 +353,11 @@ class System:
         self._solve_bulk(vec)
         return vec.reshape(self.npoints, DIM)
 
-    def _traction_operator(self, time: Real) -> tuple[LinearOperator, Real]:
+    def _traction_operator(self, tf: Real) -> tuple[LinearOperator, Real]:
         """Construct the traction operator for the exponential integrators.
 
         Args:
-            time: Time factor for the operator
+            tf: Time factor for the operator
 
         Returns:
             The traction operator and its trace
@@ -352,7 +365,7 @@ class System:
         ndof = self.ndof
         nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
         surf = slice(-nsurf, None)  # surface selector
-        trac_exp = self._trac * time
+        trac_exp = self._trac * tf
 
         def matvec(x):
             x = np.asarray(x).reshape(-1)
@@ -379,7 +392,7 @@ class System:
             dtype=float,
         ), trace
 
-    def _trotter_step(self, dt: Real) -> VectorValues:
+    def _trotter_step(self) -> VectorValues:
         """Perform one Trotter splitting integration step.
 
         Args:
@@ -390,12 +403,10 @@ class System:
         """
         nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
         surf = slice(-nsurf, None)  # surface selector
-        tf = dt / self._gamma  # time factor
-        oper, trace = self._traction_operator(tf)
+        tf = self._dt / self._gamma  # time factor
 
         vec = self.state().ravel()  # State Vector
-        vec = expm_multiply(oper, vec, traceA=trace)
-        self._solve_bulk(vec)
+        vec = expm_multiply(self._trac_oper, vec, traceA=self._trace)
 
         flu = (np.sqrt(tf) * self._std) * self._rng.normal(size=nsurf)
         vec[surf] += flu + self._force * tf
@@ -403,7 +414,7 @@ class System:
 
         return vec.reshape(self.npoints, DIM)
 
-    def _strang_step(self, dt: Real) -> VectorValues:
+    def _strang_step(self) -> VectorValues:
         """Perform one Strang splitting integration step.
 
         Args:
@@ -414,18 +425,16 @@ class System:
         """
         nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
         surf = slice(-nsurf, None)  # surface selector
-        tf = dt / self._gamma  # time factor
-        oper, trace = self._traction_operator(tf / 2)
+        tf = self._dt / self._gamma  # time factor
 
         vec = self.state().ravel()  # State Vector
-        vec = expm_multiply(oper, vec, traceA=trace)
-        self._solve_bulk(vec)
+        vec = expm_multiply(self._trac_oper, vec, traceA=self._trace)
 
         flu = (np.sqrt(tf) * self._std) * self._rng.normal(size=nsurf)
         vec[surf] += flu + self._force * tf
         self._solve_bulk(vec)
 
-        vec = expm_multiply(oper, vec, traceA=trace)
+        vec = expm_multiply(self._trac_oper, vec, traceA=self._trace)
         self._solve_bulk(vec)
         return vec.reshape(self.npoints, DIM)
 
@@ -461,9 +470,11 @@ class System:
             f.attrs["gamma"] = float(self._gamma)
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
+            f.attrs["dt"] = float(self._dt)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["kT"] = float(self._kbt)
+            f.attrs["method"] = str(self._method)
             f.attrs["rng_bit_generator"] = type(self._rng.bit_generator).__name__
             f.attrs["rng_state_json"] = json.dumps(
                 self._rng.bit_generator.state, default=json_default
@@ -512,9 +523,11 @@ class System:
             gamma = attr_float(f, "gamma")
             lam = attr_float(f, "lambda")
             mu = attr_float(f, "mu")
+            dt = attr_float(f, "dt")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
             kbt = attr_float(f, "kT")
+            method = decode_text(attr_any(f, "method"))
 
             dset = cast(h5py.Dataset, f["state"])
             state = cast(NDArray[np.floating], dset[()])
@@ -535,11 +548,13 @@ class System:
                 mesh=mesh,
                 lam=lam,
                 mu=mu,
+                dt=dt,
                 f_ext=f_ext,
                 f_loc=f_loc,
                 kbt=kbt,
                 gamma=gamma,
                 state=state,
+                method=method,
                 rng=rng,
                 verbose=verbose,
                 cache=cache,
