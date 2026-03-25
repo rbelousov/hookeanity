@@ -10,7 +10,7 @@ from hookeanity.interpolation import Interpolation
 def test_system_init():
     """Test `hookeanity.System` initialization."""
     mesh = (5, 6)
-    sys = System(mesh, 1.0, 1.0, 1-2)
+    sys = System(mesh, 1.0, 1.0, 1e-2)
     assert sys._state.shape == (np.prod(mesh), DIM)
     assert np.all(sys._state == 0)
 
@@ -139,11 +139,15 @@ def test_system_smoke():
     sys_s()()()
     assert not (sys_n._state == pytest.approx(sys_s._state))
 
-    sys_trotter = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(np.pi, 0), kbt=0.0, method="trotter")
+    sys_trotter = System(
+        mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(np.pi, 0), kbt=0.0, method="trotter"
+    )
     sys_trotter()
     assert np.isfinite(sys_trotter._state).all()
 
-    sys_strang = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0, method="strang")
+    sys_strang = System(
+        mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0, method="strang"
+    )
     sys_strang()
     assert np.isfinite(sys_strang._state).all()
 
