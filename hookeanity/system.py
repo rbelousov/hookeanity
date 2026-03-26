@@ -201,12 +201,14 @@ class System:
 
     def _build_operators(self):
         """Build operators for the equations of motion."""
-        # Helpers
         mesh = self._mesh
         ndof = self.ndof
-        nsurf = DIM * mesh[1]
-        nbulk = ndof - nsurf
+        nsurf_pts = mesh[1]
+        npoints = self.npoints
+        nbulk_pts = npoints - nsurf_pts
+        nbulk = DIM * nbulk_pts
         eye = np.eye(DIM)
+
         inter = Interpolation(mesh)
         self._grid = inter.grid()
 
@@ -217,45 +219,114 @@ class System:
         partial_xyz = np.array(
             [inter.partial_x(), inter.partial_y(), inter.partial_z()]
         )
+
+        # partial[p, a, n] = derivative in direction a at point p of basis coeff/vector n
         partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
         # Traction operator
         self.info("  elastic traction operator")
         normals = self.normals()
-        term0 = np.einsum("pa,pan->pn", normals, partial[-mesh[1] :, :, :])
+        partial_surf = partial[-nsurf_pts:, :, :]  # (nsurf_pts, DIM, npoints)
+
+        term0 = np.einsum("pa,pan->pn", normals, partial_surf)
         term1 = self._mu * np.einsum("pn,bc->pbnc", term0, eye)
-        term2 = self._lam * np.einsum(
-            "pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :]
-        )
-        term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
-        trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
-        self._trac = trac
+        term2 = self._lam * np.einsum("pb,pcn->pbnc", normals, partial_surf)
+        term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial_surf)
+        self._trac = (term1 + term2 + term3).reshape(DIM * nsurf_pts, DIM * npoints)
 
         # Stress-divergence operator
         self.info("  divergence of the elastic stress")
-        gd = np.einsum(
-            "lL,aLM,bMN,Nn->lanb",
-            inverse[: -mesh[1]],
-            partial_xyz,
-            partial_xyz,
-            transform,
-        ).reshape(nbulk, ndof)  # grad div
-        vl = np.einsum(
-            "ab,lL,cLM,cMN,Nn->lanb",
-            eye,
-            inverse[: -mesh[1]],
-            partial_xyz,
-            partial_xyz,
-            transform,
-        ).reshape(nbulk, ndof)  # vector laplacian
-        self._ela = (self._mu + self._lam) * gd + self._mu * vl  # div stress
 
+        # Reindex so P[a] is the full first-derivative matrix in direction a
+        # P[a] shape: (npoints, npoints)
+        P = np.moveaxis(partial, 1, 0)
+        P_bulk = P[:, :nbulk_pts, :]  # shape: (DIM, nbulk_pts, npoints)
+
+        gd = np.zeros((nbulk, ndof), dtype=float)
+
+        # grad(div u): block (a,b) = d_a d_b
+        for a in range(DIM):
+            row = slice(a, None, DIM)
+            Pa_bulk = P_bulk[a]
+            for b in range(DIM):
+                col = slice(b, None, DIM)
+                gd[row, col] = Pa_bulk @ P[b]
+
+        # vector Laplacian: same scalar Laplacian on each diagonal vector block
+        lap = sum(P_bulk[c] @ P[c] for c in range(DIM))
+        vl = np.zeros((nbulk, ndof), dtype=float)
+        for a in range(DIM):
+            row = slice(a, None, DIM)
+            col = slice(a, None, DIM)
+            vl[row, col] = lap
+
+        self._ela = (self._mu + self._lam) * gd + self._mu * vl
+
+        # Additive forces
         self.info("  additive forces")
         force = np.zeros((mesh[1], DIM))
         force[:, 2] = self._ext * np.array(
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()
+
+    # def _build_operators(self):
+    #     """Build operators for the equations of motion."""
+    #     # Helpers
+    #     mesh = self._mesh
+    #     ndof = self.ndof
+    #     nsurf = DIM * mesh[1]
+    #     nbulk = ndof - nsurf
+    #     eye = np.eye(DIM)
+    #     inter = Interpolation(mesh)
+    #     self._grid = inter.grid()
+
+    #     # Derivative operators
+    #     self.info("  derivative operator")
+    #     transform = inter.transform()
+    #     inverse = inter.inverse()
+    #     partial_xyz = np.array(
+    #         [inter.partial_x(), inter.partial_y(), inter.partial_z()]
+    #     )
+    #     partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
+
+    #     # Traction operator
+    #     self.info("  elastic traction operator")
+    #     normals = self.normals()
+    #     term0 = np.einsum("pa,pan->pn", normals, partial[-mesh[1] :, :, :])
+    #     term1 = self._mu * np.einsum("pn,bc->pbnc", term0, eye)
+    #     term2 = self._lam * np.einsum(
+    #         "pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :]
+    #     )
+    #     term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
+    #     trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
+    #     self._trac = trac
+
+    #     # Stress-divergence operator
+    #     self.info("  divergence of the elastic stress")
+    #     gd = np.einsum(
+    #         "lL,aLM,bMN,Nn->lanb",
+    #         inverse[: -mesh[1]],
+    #         partial_xyz,
+    #         partial_xyz,
+    #         transform,
+    #     ).reshape(nbulk, ndof)  # grad div
+    #     vl = np.einsum(
+    #         "ab,lL,cLM,cMN,Nn->lanb",
+    #         eye,
+    #         inverse[: -mesh[1]],
+    #         partial_xyz,
+    #         partial_xyz,
+    #         transform,
+    #     ).reshape(nbulk, ndof)  # vector laplacian
+    #     self._ela = (self._mu + self._lam) * gd + self._mu * vl  # div stress
+
+    #     self.info("  additive forces")
+    #     force = np.zeros((mesh[1], DIM))
+    #     force[:, 2] = self._ext * np.array(
+    #         [chi(np.array(self._loc)) for chi in inter._angular_functions]
+    #     )
+    #     self._force = force.ravel()
 
     def info(self, message: str):
         """Log information message in the verbose mode."""

@@ -164,3 +164,105 @@ def test_system_cache(tmp_path):
     assert np.all(sys1._trac == sys2._trac)
     assert np.all(sys1._ela == sys2._ela)
     assert np.all(sys1._force == sys2._force)
+
+def _build_operators_old(
+    mesh: tuple[int, int],
+    lam: float,
+    mu: float,
+    f_ext: float,
+    f_loc: tuple[float, float],
+):
+    """Implement `_build_operators` according to the old method.
+
+    Returns:
+        Tuple `(grid, trac, ela, force)`.
+    """
+    ndof = DIM * int(np.prod(mesh))
+    eye = np.eye(DIM)
+
+    inter = Interpolation(mesh)
+    grid = inter.grid()
+
+    # Derivative operators
+    transform = inter.transform()
+    inverse = inter.inverse()
+    partial_xyz = np.array(
+        [inter.partial_x(), inter.partial_y(), inter.partial_z()]
+    )
+    partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
+
+    # Surface normals (same formula as System.normals())
+    angles = grid[-mesh[1] :, 1:]
+    st = np.sin(angles[:, 0])
+    st2 = st**2
+    ct = np.cos(angles[:, 0])
+    sp = np.sin(angles[:, 1])
+    cp = np.cos(angles[:, 1])
+    normals = -np.stack([st2 * cp, st2 * sp, st * ct], axis=1)
+
+    # Traction operator
+    term0 = np.einsum("pa,pan->pn", normals, partial[-mesh[1] :, :, :])
+    term1 = mu * np.einsum("pn,bc->pbnc", term0, eye)
+    term2 = lam * np.einsum(
+        "pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :]
+    )
+    term3 = mu * np.einsum(
+        "pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :]
+    )
+    trac = (term1 + term2 + term3).reshape(DIM * mesh[1], ndof)
+
+    # Divergence of the elastic stress
+    nbulk = ndof - DIM * mesh[1]
+    gd = np.einsum(
+        "lL,aLM,bMN,Nn->lanb",
+        inverse[:-mesh[1]],
+        partial_xyz,
+        partial_xyz,
+        transform,
+    ).reshape(nbulk, ndof)
+
+    vl = np.einsum(
+        "ab,lL,cLM,cMN,Nn->lanb",
+        eye,
+        inverse[:-mesh[1]],
+        partial_xyz,
+        partial_xyz,
+        transform,
+    ).reshape(nbulk, ndof)
+
+    ela = (mu + lam) * gd + mu * vl
+
+    # Additive forces
+    force = np.zeros((mesh[1], DIM))
+    force[:, 2] = f_ext * np.array(
+        [chi(np.array(f_loc)) for chi in inter._angular_functions]
+    )
+    force = force.ravel()
+
+    return trac, ela, force
+
+def test_build_operators_old_and_new_match():
+    """Test that the full optimized `_build_operators()` matches the old one."""
+    mesh = (5, 10)
+    lam = 2.0
+    mu = 3.0
+    dt = 1e-2
+    f_ext = 0.5
+    f_loc = (0.7, 1.2)
+
+    sys = System(mesh, lam, mu, dt, f_ext=f_ext, f_loc=f_loc, kbt=0.0)
+    trac_old, ela_old, force_old = _build_operators_old(
+        mesh=mesh,
+        lam=lam,
+        mu=mu,
+        f_ext=f_ext,
+        f_loc=f_loc,
+    )
+
+    assert sys._trac.shape == trac_old.shape
+    assert sys._ela.shape == ela_old.shape
+    assert sys._force.shape == force_old.shape
+
+    assert sys._trac == pytest.approx(trac_old)
+    assert sys._ela == pytest.approx(ela_old)
+    assert sys._force == pytest.approx(force_old)
