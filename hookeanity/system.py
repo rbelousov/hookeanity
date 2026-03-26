@@ -270,64 +270,6 @@ class System:
         )
         self._force = force.ravel()
 
-    # def _build_operators(self):
-    #     """Build operators for the equations of motion."""
-    #     # Helpers
-    #     mesh = self._mesh
-    #     ndof = self.ndof
-    #     nsurf = DIM * mesh[1]
-    #     nbulk = ndof - nsurf
-    #     eye = np.eye(DIM)
-    #     inter = Interpolation(mesh)
-    #     self._grid = inter.grid()
-
-    #     # Derivative operators
-    #     self.info("  derivative operator")
-    #     transform = inter.transform()
-    #     inverse = inter.inverse()
-    #     partial_xyz = np.array(
-    #         [inter.partial_x(), inter.partial_y(), inter.partial_z()]
-    #     )
-    #     partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
-
-    #     # Traction operator
-    #     self.info("  elastic traction operator")
-    #     normals = self.normals()
-    #     term0 = np.einsum("pa,pan->pn", normals, partial[-mesh[1] :, :, :])
-    #     term1 = self._mu * np.einsum("pn,bc->pbnc", term0, eye)
-    #     term2 = self._lam * np.einsum(
-    #         "pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :]
-    #     )
-    #     term3 = self._mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
-    #     trac = (term1 + term2 + term3).reshape(DIM * mesh[1], DIM * np.prod(mesh))
-    #     self._trac = trac
-
-    #     # Stress-divergence operator
-    #     self.info("  divergence of the elastic stress")
-    #     gd = np.einsum(
-    #         "lL,aLM,bMN,Nn->lanb",
-    #         inverse[: -mesh[1]],
-    #         partial_xyz,
-    #         partial_xyz,
-    #         transform,
-    #     ).reshape(nbulk, ndof)  # grad div
-    #     vl = np.einsum(
-    #         "ab,lL,cLM,cMN,Nn->lanb",
-    #         eye,
-    #         inverse[: -mesh[1]],
-    #         partial_xyz,
-    #         partial_xyz,
-    #         transform,
-    #     ).reshape(nbulk, ndof)  # vector laplacian
-    #     self._ela = (self._mu + self._lam) * gd + self._mu * vl  # div stress
-
-    #     self.info("  additive forces")
-    #     force = np.zeros((mesh[1], DIM))
-    #     force[:, 2] = self._ext * np.array(
-    #         [chi(np.array(self._loc)) for chi in inter._angular_functions]
-    #     )
-    #     self._force = force.ravel()
-
     def info(self, message: str):
         """Log information message in the verbose mode."""
         if self.verbose:
@@ -408,9 +350,6 @@ class System:
     def _euler_step(self) -> VectorValues:
         """Perform one Euler-Maruyama integration step.
 
-        Args:
-            dt: Integration time step
-
         Returns:
             Updated state vector after one Euler-Maruyama step.
         """
@@ -469,9 +408,6 @@ class System:
     def _trotter_step(self) -> VectorValues:
         """Perform one Trotter splitting integration step.
 
-        Args:
-            dt: Integration time step
-
         Returns:
             Updated state vector after one Trotter splitting step
         """
@@ -489,9 +425,6 @@ class System:
 
     def _strang_step(self) -> VectorValues:
         """Perform one Strang splitting integration step.
-
-        Args:
-            dt: Integration time step
 
         Returns:
             Updated state vector after one Strang splitting step
