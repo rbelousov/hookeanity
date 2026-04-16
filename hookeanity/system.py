@@ -264,8 +264,9 @@ class System:
 
         # Additive forces
         self.info("  additive forces")
+        omega = 4 * np.pi / mesh[1] # Fibonacci weight
         force = np.zeros((mesh[1], DIM))
-        force[:, 2] = self._ext * np.array(
+        force[:, 2] = (self._ext / np.sqrt(omega))* np.array(
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()
@@ -276,7 +277,7 @@ class System:
             logger.info(message)
 
     def normals(self) -> VectorValues:
-        """Return inward surface normals."""
+        """Return inward surface area normals dS."""
         angles = self._grid[-self.mesh[-1] :, 1:]
         st = np.sin(angles[:, 0])
         st2 = st**2
