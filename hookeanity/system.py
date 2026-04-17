@@ -264,9 +264,8 @@ class System:
 
         # Additive forces
         self.info("  additive forces")
-        omega = 4 * np.pi / mesh[1] # Fibonacci weight
         force = np.zeros((mesh[1], DIM))
-        force[:, 2] = (self._ext / np.sqrt(omega))* np.array(
+        force[:, 2] = (self._ext)* np.array(
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()

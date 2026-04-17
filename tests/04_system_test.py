@@ -233,10 +233,9 @@ def _build_operators_old(
     ela = (mu + lam) * gd + mu * vl
 
     # Additive forces
-    omega = 4 * np.pi / mesh[1] # Fibonacci weight # new weight
     force = np.zeros((mesh[1], DIM))
     force[:, 2] = f_ext * np.array(
-        [chi(np.array(f_loc)) / np.sqrt(omega) for chi in inter._angular_functions]
+        [chi(np.array(f_loc)) for chi in inter._angular_functions]
     )
     force = force.ravel()
 
