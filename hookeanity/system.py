@@ -581,7 +581,7 @@ class System:
             f.create_dataset("ela", data=self._ela, compression="lzf", shuffle=True)
             f.create_dataset(
                 "fext",
-                data=self._force[DIM - 2 :: DIM],
+                data=self._force[2 :: DIM], # [DIM - 2 :: DIM],
                 compression="lzf",
                 shuffle=True,
             )
