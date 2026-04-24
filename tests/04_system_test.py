@@ -189,9 +189,7 @@ def _build_operators_old(
     # Derivative operators
     transform = inter.transform()
     inverse = inter.inverse()
-    partial_xyz = np.array(
-        [inter.partial_x(), inter.partial_y(), inter.partial_z()]
-    )
+    partial_xyz = np.array([inter.partial_x(), inter.partial_y(), inter.partial_z()])
     partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
 
     # Surface normals (same formula as System.normals())
@@ -206,19 +204,15 @@ def _build_operators_old(
     # Traction operator
     term0 = np.einsum("pa,pan->pn", normals, partial[-mesh[1] :, :, :])
     term1 = mu * np.einsum("pn,bc->pbnc", term0, eye)
-    term2 = lam * np.einsum(
-        "pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :]
-    )
-    term3 = mu * np.einsum(
-        "pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :]
-    )
+    term2 = lam * np.einsum("pb,pcn->pbnc", normals, partial[-mesh[1] :, :, :])
+    term3 = mu * np.einsum("pc,pbn->pbnc", normals, partial[-mesh[1] :, :, :])
     trac = (term1 + term2 + term3).reshape(DIM * mesh[1], ndof)
 
     # Divergence of the elastic stress
     nbulk = ndof - DIM * mesh[1]
     gd = np.einsum(
         "lL,aLM,bMN,Nn->lanb",
-        inverse[:-mesh[1]],
+        inverse[: -mesh[1]],
         partial_xyz,
         partial_xyz,
         transform,
@@ -227,7 +221,7 @@ def _build_operators_old(
     vl = np.einsum(
         "ab,lL,cLM,cMN,Nn->lanb",
         eye,
-        inverse[:-mesh[1]],
+        inverse[: -mesh[1]],
         partial_xyz,
         partial_xyz,
         transform,
@@ -243,6 +237,7 @@ def _build_operators_old(
     force = force.ravel()
 
     return trac, ela, force
+
 
 def test_build_operators_old_and_new_match():
     """Test that the full optimized `_build_operators()` matches the old one."""
@@ -272,7 +267,10 @@ def test_build_operators_old_and_new_match():
 
 
 def test_bulk_elimination_matches_direct_bulk_solve():
-    """Test that the reduced bulk map reproduces the direct solve from Eq. (S5)."""
+    """Test that the reduced bulk map reproduces the direct solve from Eq.
+
+    (S5).
+    """
     mesh = (5, 10)
     sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0)
 

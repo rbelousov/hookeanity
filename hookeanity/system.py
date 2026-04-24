@@ -275,7 +275,7 @@ class System:
         # Additive forces
         self.info("  additive forces")
         force = np.zeros((mesh[1], DIM))
-        force[:, 2] = (self._ext)* np.array(
+        force[:, 2] = (self._ext) * np.array(
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()
@@ -288,7 +288,9 @@ class System:
         surf = slice(-nsurf, None)
 
         self._bulk_from_surf = -np.linalg.solve(self._ela[:, bulk], self._ela[:, surf])
-        self._trac_red = self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
+        self._trac_red = (
+            self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
+        )
 
     def _reconstruct_state(self, surf: np.ndarray) -> VectorValues:
         """Reconstruct the full state from the surface degrees of freedom."""
@@ -602,7 +604,7 @@ class System:
             )
             f.create_dataset(
                 "fext",
-                data=self._force[2 :: DIM], # [DIM - 2 :: DIM],
+                data=self._force[2::DIM],  # [DIM - 2 :: DIM],
                 compression="lzf",
                 shuffle=True,
             )
