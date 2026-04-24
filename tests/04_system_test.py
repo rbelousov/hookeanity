@@ -163,7 +163,10 @@ def test_system_cache(tmp_path):
     assert np.all(sys1._grid == sys2._grid)
     assert np.all(sys1._trac == sys2._trac)
     assert np.all(sys1._ela == sys2._ela)
+    assert np.all(sys1._bulk_from_surf == sys2._bulk_from_surf)
+    assert np.all(sys1._trac_red == sys2._trac_red)
     assert np.all(sys1._force == sys2._force)
+
 
 def _build_operators_old(
     mesh: tuple[int, int],
@@ -266,3 +269,28 @@ def test_build_operators_old_and_new_match():
     assert sys._trac == pytest.approx(trac_old)
     assert sys._ela == pytest.approx(ela_old)
     assert sys._force == pytest.approx(force_old)
+
+
+def test_bulk_elimination_matches_direct_bulk_solve():
+    """Test that the reduced bulk map reproduces the direct solve from Eq. (S5)."""
+    mesh = (5, 10)
+    sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0)
+
+    surf = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=sys.nsurf)
+    bulk = -np.linalg.solve(
+        sys._ela[:, : -sys.nsurf],
+        sys._ela[:, -sys.nsurf :] @ surf,
+    )
+
+    assert sys._bulk_from_surf @ surf == pytest.approx(bulk)
+
+
+def test_reduced_surface_traction_matches_full_traction_on_constrained_state():
+    """Test the Schur-complement traction against the full traction operator."""
+    mesh = (5, 10)
+    sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0)
+
+    surf = np.random.default_rng(1).uniform(low=-1e-3, high=1e-3, size=sys.nsurf)
+    state = sys._reconstruct_state(surf).ravel()
+
+    assert sys._trac_red @ surf == pytest.approx(sys._trac @ state)

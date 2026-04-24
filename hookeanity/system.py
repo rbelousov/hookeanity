@@ -199,6 +199,16 @@ class System:
         self._std = np.sqrt(2 * self._kbt * self._tf)
         self.info("System ready")
 
+    @property
+    def nsurf(self) -> int:
+        """Return number of surface degrees of freedom."""
+        return DIM * self.mesh[1]
+
+    @property
+    def nbulk(self) -> int:
+        """Return number of bulk degrees of freedom."""
+        return self.ndof - self.nsurf
+
     def _build_operators(self):
         """Build operators for the equations of motion."""
         mesh = self._mesh
@@ -269,6 +279,29 @@ class System:
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
         self._force = force.ravel()
+        self._build_surface_reduction()
+
+    def _build_surface_reduction(self):
+        """Precompute the linear elimination of the bulk degrees of freedom."""
+        nsurf = self.nsurf
+        bulk = slice(None, -nsurf)
+        surf = slice(-nsurf, None)
+
+        self._bulk_from_surf = -np.linalg.solve(self._ela[:, bulk], self._ela[:, surf])
+        self._trac_red = self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
+
+    def _reconstruct_state(self, surf: np.ndarray) -> VectorValues:
+        """Reconstruct the full state from the surface degrees of freedom."""
+        surf = np.asarray(surf).reshape(-1)
+        vec = np.empty(self.ndof, dtype=surf.dtype)
+        if self.nbulk:
+            vec[: -self.nsurf] = self._bulk_from_surf @ surf
+        vec[-self.nsurf :] = surf
+        return vec.reshape(self.npoints, DIM)
+
+    def _surface_state(self) -> np.ndarray:
+        """Return flat surface degrees of freedom."""
+        return self.surface().ravel()
 
     def info(self, message: str):
         """Log information message in the verbose mode."""
@@ -340,11 +373,11 @@ class System:
         Returns:
             Updated degrees of freedom
         """
-        nsurf = DIM * self.mesh[1]  # number of surface DoFs
+        nsurf = self.nsurf
         bulk = slice(None, -nsurf)  # bulk selector
         surf = slice(-nsurf, None)  # surface selector
 
-        vec[bulk] = np.linalg.solve(self._ela[:, bulk], -self._ela[:, surf] @ vec[surf])
+        vec[bulk] = self._bulk_from_surf @ vec[surf]
         return vec
 
     def _euler_step(self) -> VectorValues:
@@ -353,18 +386,13 @@ class System:
         Returns:
             Updated state vector after one Euler-Maruyama step.
         """
-        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
-        surf = slice(-nsurf, None)  # surface selector
-        vec = self.state().ravel()  # State Vector
+        surf = self._surface_state()
 
         # Surface step
-        traction = self._trac @ vec
-        flu = self._std * self._rng.normal(size=nsurf)
-        vec[surf] += (traction + self._force) * self._tf + flu
-
-        # Bulk step
-        self._solve_bulk(vec)
-        return vec.reshape(self.npoints, DIM)
+        traction = self._trac_red @ surf
+        flu = self._std * self._rng.normal(size=self.nsurf)
+        surf = surf + (traction + self._force) * self._tf + flu
+        return self._reconstruct_state(surf)
 
     def _traction_operator(self, tf: Real) -> tuple[LinearOperator, Real]:
         """Construct the traction operator for the exponential integrators.
@@ -375,30 +403,24 @@ class System:
         Returns:
             The traction operator and its trace
         """
-        ndof = self.ndof
-        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
-        surf = slice(-nsurf, None)  # surface selector
-        trac_exp = self._trac * tf
+        nsurf = self.nsurf
+        trac_exp = self._trac_red * tf
 
         def matvec(x):
             x = np.asarray(x).reshape(-1)
-            y = np.zeros(ndof, dtype=x.dtype)
-            y[surf] = trac_exp @ x
-            return y
+            return trac_exp @ x
 
         def rmatvec(x):
             x = np.asarray(x).reshape(-1)
-            return trac_exp.T @ x[surf]
+            return trac_exp.T @ x
 
         def matmat(x):
             x = np.asarray(x)
-            y = np.zeros((ndof, x.shape[1]), dtype=x.dtype)
-            y[surf, :] = trac_exp @ x
-            return y
+            return trac_exp @ x
 
-        trace = np.trace(trac_exp[:, surf])
+        trace = np.trace(trac_exp)
         return cast(Any, LinearOperator)(
-            shape=(ndof, ndof),
+            shape=(nsurf, nsurf),
             matvec=matvec,
             rmatvec=rmatvec,
             matmat=matmat,
@@ -411,17 +433,11 @@ class System:
         Returns:
             Updated state vector after one Trotter splitting step
         """
-        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
-        surf = slice(-nsurf, None)  # surface selector
-
-        vec = self.state().ravel()  # State Vector
-        vec = expm_multiply(self._trac_oper, vec, traceA=self._trace)
-
-        flu = self._std * self._rng.normal(size=nsurf)
-        vec[surf] += flu + self._force * self._tf
-        self._solve_bulk(vec)
-
-        return vec.reshape(self.npoints, DIM)
+        surf = self._surface_state()
+        surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
+        flu = self._std * self._rng.normal(size=self.nsurf)
+        surf = surf + flu + self._force * self._tf
+        return self._reconstruct_state(surf)
 
     def _strang_step(self) -> VectorValues:
         """Perform one Strang splitting integration step.
@@ -429,19 +445,12 @@ class System:
         Returns:
             Updated state vector after one Strang splitting step
         """
-        nsurf = DIM * self.mesh[1]  # nuber of surface DoFs
-        surf = slice(-nsurf, None)  # surface selector
-
-        vec = self.state().ravel()  # State Vector
-        vec = expm_multiply(self._trac_oper, vec, traceA=self._trace)
-
-        flu = self._std * self._rng.normal(size=nsurf)
-        vec[surf] += flu + self._force * self._tf
-        self._solve_bulk(vec)
-
-        vec = expm_multiply(self._trac_oper, vec, traceA=self._trace)
-        self._solve_bulk(vec)
-        return vec.reshape(self.npoints, DIM)
+        surf = self._surface_state()
+        surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
+        flu = self._std * self._rng.normal(size=self.nsurf)
+        surf = surf + flu + self._force * self._tf
+        surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
+        return self._reconstruct_state(surf)
 
     def save(self, filepath: str | Path) -> Self:
         """Save system data into an HDF5 file.
@@ -580,6 +589,18 @@ class System:
             f.create_dataset("trac", data=self._trac, compression="lzf", shuffle=True)
             f.create_dataset("ela", data=self._ela, compression="lzf", shuffle=True)
             f.create_dataset(
+                "bulk_from_surf",
+                data=self._bulk_from_surf,
+                compression="lzf",
+                shuffle=True,
+            )
+            f.create_dataset(
+                "trac_red",
+                data=self._trac_red,
+                compression="lzf",
+                shuffle=True,
+            )
+            f.create_dataset(
                 "fext",
                 data=self._force[2 :: DIM], # [DIM - 2 :: DIM],
                 compression="lzf",
@@ -635,6 +656,8 @@ class System:
             self._grid = ndfloat_dataset(f, "grid")
             self._trac = ndfloat_dataset(f, "trac")
             self._ela = ndfloat_dataset(f, "ela")
+            self._bulk_from_surf = ndfloat_dataset(f, "bulk_from_surf")
+            self._trac_red = ndfloat_dataset(f, "trac_red")
             force = np.zeros((mesh[1], DIM))
             force[:, 2] = ndfloat_dataset(f, "fext")
             self._force = force.ravel()
