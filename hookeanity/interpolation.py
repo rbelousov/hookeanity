@@ -28,18 +28,20 @@ class Interpolation:
     def __init__(
         self,
         mesh: tuple[int, int],
+        lmax: int | None = None,
     ):
         """Initialize interpolation on the given mesh.
 
         Args:
             mesh: Number of radial and angular grid points
+            lmax: Maximum order of the spherical harmonic expansion
         """
         self._radii, self._rws = RadialPolynomial.quadrature(mesh[0] - 1)
         self._angles = fibonacci_points(mesh[1])
         self._aws = np.full(mesh[1], fibonacci_weight(mesh[1]))
 
         self._radial_functions = [RadialPolynomial(n) for n in range(mesh[0])]
-        self._matern = MaternInterpolator(self._angles, weights=self._aws)
+        self._matern = MaternInterpolator(self._angles, weights=self._aws, lmax=lmax)
         self._angular_functions = list(self._matern)
 
         self._radial_values = np.array(
@@ -224,3 +226,8 @@ class Interpolation:
     def mesh(self) -> tuple[int, int]:
         """Return mesh specification of the interpolation grid."""
         return self.nradii, self.nangles
+
+    @property
+    def lmax(self) -> int:
+        """Return maximum spherical-harmonic expansion order."""
+        return self._matern._lmax

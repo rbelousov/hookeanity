@@ -144,6 +144,12 @@ def test_transform():
     assert inverse @ transform == pytest.approx(np.eye(sz))
 
 
+def test_lmax():
+    """Test custom spherical-harmonic expansion order."""
+    inter = Interpolation((5, 5), lmax=3)
+    assert inter.lmax == 3
+
+
 def test_partial_r(scalar, scalar_r):
     """Test `Interpolation.partial_r`."""
     inter = Interpolation((5, 5))

@@ -69,7 +69,7 @@ def attr_f_loc(file: h5py.File) -> tuple[float, float]:
     Args:
         file: File handle
 
-    Returns:
+    Returns:std
         Location of the force application point
 
     Raises:
@@ -80,6 +80,20 @@ def attr_f_loc(file: h5py.File) -> tuple[float, float]:
     if arr.shape != (2,):
         raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
     return (float(arr[0]), float(arr[1]))
+
+
+def attr_lmax(file: h5py.File) -> int | None:
+    """Read spherical-harmonic cutoff from HDF5 attributes."""
+    key = "lmax"
+    if key not in file.attrs:
+        return None
+    value = int(attr_any(file, key))
+    return None if value < 0 else value
+
+
+def h5_lmax(lmax: int | None) -> int:
+    """Return HDF5-safe representation of an optional lmax."""
+    return -1 if lmax is None else int(lmax)
 
 
 def ndfloat_dataset(file: h5py.File, key: str) -> NDArray[np.floating]:
@@ -105,6 +119,7 @@ class System:
         _mu (hookeanity.Real): Lamé mu coefficient
         _ext (hookeanity.Real): Magnitude of the external point force
         _loc (tuple[hookeanity.Real, hookeanity.Real]): Solid angle specifying the location of the external point force
+        _lmax (int | None): Maximum order of the spherical harmonic expansion
         _kbt (hookeanity.Real): Temperature
         _state (hookeanity.VectorValues): Displacements of the grid points
         _grid (kookeanity.Grid): Mesh grid
@@ -137,6 +152,7 @@ class System:
         rng: np.random.Generator | Seed | None = None,
         verbose: bool = False,
         cache: str | Path | None = None,
+        lmax: int | None = None,
     ):
         """Initialize the simulation system.
 
@@ -154,9 +170,11 @@ class System:
             rng: Optional state of the random number generator or seed
             verbose: Log the initialization
             cache: Path to the cached numerical data
+            lmax: Maximum order of the spherical harmonic expansion
 
         Raises:
             ValueError: On unknown integration method
+            AssertionError: When traction operator has a positive eigenvalue
         """
         if method not in {"euler", "strang", "trotter"}:
             raise ValueError(f"Unknown integration method: {method!r}.")
@@ -168,6 +186,7 @@ class System:
         self._dt = dt
         self._ext = f_ext
         self._loc = f_loc
+        self._lmax = None if lmax is None else int(lmax)
         self._kbt = kbt
         self._method = method
         self._state = (
@@ -197,6 +216,11 @@ class System:
             self._trac_oper, self._trace = self._traction_operator(self._tf / 2)
 
         self._std = np.sqrt(2 * self._kbt * self._tf)
+
+        max_eigenvalue = np.linalg.eigvals(self._trac_red).real.max()
+        assert max_eigenvalue < 0, (
+            f"Unstable mode detected ({max_eigenvalue:.3e}): increase lmax parameter"
+        )
         self.info("System ready")
 
     @property
@@ -216,10 +240,10 @@ class System:
         nsurf_pts = mesh[1]
         npoints = self.npoints
         nbulk_pts = npoints - nsurf_pts
-        nbulk = DIM * nbulk_pts
+        nbulk = self.nbulk
         eye = np.eye(DIM)
 
-        inter = Interpolation(mesh)
+        inter = Interpolation(mesh, lmax=self._lmax)
         self._grid = inter.grid()
 
         # Derivative operators
@@ -287,7 +311,11 @@ class System:
         bulk = slice(None, -nsurf)
         surf = slice(-nsurf, None)
 
-        self._bulk_from_surf = -np.linalg.solve(self._ela[:, bulk], self._ela[:, surf])
+        ebb = self._ela[:, bulk]
+        ebs = self._ela[:, surf]
+        self._bulk_from_surf = -np.linalg.lstsq(ebb, ebs, rcond=None)[
+            0
+        ]  # rcond=1e-12 or 1e-10?
         self._trac_red = (
             self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
         )
@@ -324,6 +352,11 @@ class System:
     def mesh(self) -> tuple[int, int]:
         """Return mesh specification of the point grid."""
         return self._mesh
+
+    @property
+    def lmax(self) -> int | None:
+        """Return maximum spherical-harmonic expansion order."""
+        return self._lmax
 
     @property
     def npoints(self) -> int:
@@ -489,6 +522,7 @@ class System:
             f.attrs["dt"] = float(self._dt)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
+            f.attrs["lmax"] = h5_lmax(self._lmax)
             f.attrs["kT"] = float(self._kbt)
             f.attrs["method"] = str(self._method)
             f.attrs["rng_bit_generator"] = type(self._rng.bit_generator).__name__
@@ -542,6 +576,7 @@ class System:
             dt = attr_float(f, "dt")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
+            lmax = attr_lmax(f)
             kbt = attr_float(f, "kT")
             method = decode_text(attr_any(f, "method"))
 
@@ -574,6 +609,7 @@ class System:
                 rng=rng,
                 verbose=verbose,
                 cache=cache,
+                lmax=lmax,
             )
 
     def save_cache(self, filepath: str | Path) -> Self:
@@ -615,6 +651,7 @@ class System:
             f.attrs["mu"] = float(self._mu)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
+            f.attrs["lmax"] = h5_lmax(self._lmax)
 
         return self
 
@@ -637,6 +674,7 @@ class System:
             mu = attr_float(f, "mu")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
+            lmax = attr_lmax(f)
 
             assert mesh == self._mesh, (
                 "Inconsistent meshes between the system and the cache file"
@@ -652,6 +690,9 @@ class System:
             )
             assert f_loc == self._loc, (
                 "Inconsistent force-application points between the system and the cache file"
+            )
+            assert lmax == self._lmax, (
+                "Inconsistent spherical-harmonic cutoffs between the system and the cache file"
             )
 
             # Datasets

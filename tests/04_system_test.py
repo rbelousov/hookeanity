@@ -9,8 +9,8 @@ from hookeanity.interpolation import Interpolation
 
 def test_system_init():
     """Test `hookeanity.System` initialization."""
-    mesh = (5, 6)
-    sys = System(mesh, 1.0, 1.0, 1e-2)
+    mesh = (5, 12)
+    sys = System(mesh, 1.0, 1.0, 1e-2, lmax=5)
     assert sys._state.shape == (np.prod(mesh), DIM)
     assert np.all(sys._state == 0)
 
@@ -24,11 +24,13 @@ def test_save_and_load(tmp_path):
     dt = 1e-2
     f_ext = 0.5
     kbt = 1.5
-    mesh = (5, 6)
-    system = System(mesh, lam, mu, dt, f_ext, kbt=kbt)
+    lmax = 5
+    mesh = (5, 12)
+    system = System(mesh, lam, mu, dt, f_ext, kbt=kbt, lmax=lmax)
     system.save(filepath)
     sample1 = system._rng.random(5)
     assert system.mesh == mesh
+    assert system.lmax == lmax
     assert system.surface().shape == (mesh[1], DIM)
     assert system.surface_points().shape == (mesh[1], DIM)
 
@@ -40,19 +42,21 @@ def test_save_and_load(tmp_path):
     assert loaded._dt == dt
     assert loaded._ext == f_ext
     assert loaded._kbt == kbt
+    assert loaded.lmax == lmax
     assert loaded._method == "euler"
     assert np.all(sample1 == sample2)
 
 
 def test_stress_divergence():
     """Test formulas for the divergence of stress."""
-    mesh = (5, 6)
+    mesh = (5, 12)
+    lmax = 5
     state = np.random.default_rng(0).uniform(
         low=-1e-3, high=1e-3, size=(np.prod(mesh), DIM)
     )
-    sys = System(mesh, 1.0, 1.0, 1e-2, kbt=0.0, state=state)
+    sys = System(mesh, 1.0, 1.0, 1e-2, kbt=0.0, state=state, lmax=lmax)
 
-    inter = Interpolation(mesh)
+    inter = Interpolation(mesh, lmax=lmax)
     transform = inter.transform()
     inverse = inter.inverse()
     partial = np.asarray([inter.partial_x(), inter.partial_y(), inter.partial_z()])
@@ -81,13 +85,14 @@ def test_stress_divergence():
 
 def test_traction():
     """Test formulas for the traction force."""
-    mesh = (5, 6)
+    mesh = (5, 12)
+    lmax = 5
     state = np.random.default_rng(0).uniform(
         low=-1e-3, high=1e-3, size=(np.prod(mesh), DIM)
     )
-    sys = System(mesh, 1.0, 1.0, 1e-2, kbt=0.0, state=state)
+    sys = System(mesh, 1.0, 1.0, 1e-2, kbt=0.0, state=state, lmax=lmax)
 
-    inter = Interpolation(mesh)
+    inter = Interpolation(mesh, lmax=lmax)
     eye = np.eye(DIM)
     transform = inter.transform()
     inverse = inter.inverse()
@@ -115,10 +120,11 @@ def test_traction():
 
 def test_system_smoke():
     """Check first smoke of the system functionality."""
-    mesh = (5, 10)
+    mesh = (5, 12)
+    lmax = 5
     dt = 1e-2
 
-    sys = System(mesh, 1.0, 1.0, dt, kbt=0.0)
+    sys = System(mesh, 1.0, 1.0, dt, kbt=0.0, lmax=lmax)
     assert sys._kbt == 0.0
     assert sys()._state.shape == (np.prod(mesh), DIM)
     assert np.all(sys._state == 0)
@@ -128,25 +134,33 @@ def test_system_smoke():
     assert sys()._state.shape == (np.prod(mesh), DIM)
     assert sys._state == pytest.approx(1, abs=1e-3)
 
-    sys = System(mesh, 1.0, 1.0, dt, verbose=True)()
+    sys = System(mesh, 1.0, 1.0, dt, verbose=True, lmax=lmax)()
     assert sys._kbt == 1
     assert sys._state != pytest.approx(1, abs=1e-3)
 
-    sys_n = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0)
-    sys_s = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(np.pi, 0), kbt=0.0)
+    sys_n = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0, lmax=lmax)
+    sys_s = System(mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(np.pi, 0), kbt=0.0, lmax=lmax)
     assert not (sys_n._force == pytest.approx(sys_s._force))
     sys_n()()()
     sys_s()()()
     assert not (sys_n._state == pytest.approx(sys_s._state))
 
     sys_trotter = System(
-        mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(np.pi, 0), kbt=0.0, method="trotter"
+        mesh,
+        1.0,
+        1.0,
+        dt,
+        f_ext=10,
+        f_loc=(np.pi, 0),
+        kbt=0.0,
+        method="trotter",
+        lmax=lmax,
     )
     sys_trotter()
     assert np.isfinite(sys_trotter._state).all()
 
     sys_strang = System(
-        mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0, method="strang"
+        mesh, 1.0, 1.0, dt, f_ext=10, f_loc=(0, 0), kbt=0.0, method="strang", lmax=lmax
     )
     sys_strang()
     assert np.isfinite(sys_strang._state).all()
@@ -154,18 +168,23 @@ def test_system_smoke():
 
 def test_system_cache(tmp_path):
     """Test saving and loading cache data for `System` objects."""
-    mesh = (5, 6)
+    mesh = (5, 12)
+    lmax = 5
     cache = tmp_path / "cache.5x6.l2m3.h5"
-    sys1 = System(mesh, 2.0, 3.0, 1e-2)
+    sys1 = System(mesh, 2.0, 3.0, 1e-2, lmax=lmax)
     sys1.save_cache(cache)
 
-    sys2 = System(mesh, 2.0, 3.0, 1e-2, cache=cache)
+    sys2 = System(mesh, 2.0, 3.0, 1e-2, lmax=lmax, cache=cache)
+    assert sys2.lmax == sys1.lmax
     assert np.all(sys1._grid == sys2._grid)
     assert np.all(sys1._trac == sys2._trac)
     assert np.all(sys1._ela == sys2._ela)
     assert np.all(sys1._bulk_from_surf == sys2._bulk_from_surf)
     assert np.all(sys1._trac_red == sys2._trac_red)
     assert np.all(sys1._force == sys2._force)
+
+    with pytest.raises(AssertionError, match="spherical-harmonic cutoffs"):
+        System(mesh, 2.0, 3.0, 1e-2, cache=cache)
 
 
 def _build_operators_old(
@@ -174,6 +193,7 @@ def _build_operators_old(
     mu: float,
     f_ext: float,
     f_loc: tuple[float, float],
+    lmax: int,
 ):
     """Implement `_build_operators` according to the old method.
 
@@ -183,7 +203,7 @@ def _build_operators_old(
     ndof = DIM * int(np.prod(mesh))
     eye = np.eye(DIM)
 
-    inter = Interpolation(mesh)
+    inter = Interpolation(mesh, lmax=lmax)
     grid = inter.grid()
 
     # Derivative operators
@@ -239,22 +259,19 @@ def _build_operators_old(
     return trac, ela, force
 
 
-def test_build_operators_old_and_new_match():
-    """Test that the full optimized `_build_operators()` matches the old one."""
-    mesh = (5, 10)
+def test_build_operators():
+    """Test that the optimized `_build_operators()` matches the old implementation."""
+    mesh = (5, 12)
+    lmax = 5
     lam = 2.0
     mu = 3.0
     dt = 1e-2
     f_ext = 0.5
     f_loc = (0.7, 1.2)
 
-    sys = System(mesh, lam, mu, dt, f_ext=f_ext, f_loc=f_loc, kbt=0.0)
+    sys = System(mesh, lam, mu, dt, f_ext=f_ext, f_loc=f_loc, kbt=0.0, lmax=lmax)
     trac_old, ela_old, force_old = _build_operators_old(
-        mesh=mesh,
-        lam=lam,
-        mu=mu,
-        f_ext=f_ext,
-        f_loc=f_loc,
+        mesh=mesh, lam=lam, mu=mu, f_ext=f_ext, f_loc=f_loc, lmax=lmax
     )
 
     assert sys._trac.shape == trac_old.shape
@@ -266,13 +283,11 @@ def test_build_operators_old_and_new_match():
     assert sys._force == pytest.approx(force_old)
 
 
-def test_bulk_elimination_matches_direct_bulk_solve():
-    """Test that the reduced bulk map reproduces the direct solve from Eq.
-
-    (S5).
-    """
-    mesh = (5, 10)
-    sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0)
+def test_bulk_reconstruction():
+    """Test the reduced bulk map reproduces the direct solve from Eq."""
+    mesh = (5, 12)
+    lmax = 5
+    sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0, lmax=lmax)
 
     surf = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=sys.nsurf)
     bulk = -np.linalg.solve(
@@ -283,10 +298,11 @@ def test_bulk_elimination_matches_direct_bulk_solve():
     assert sys._bulk_from_surf @ surf == pytest.approx(bulk)
 
 
-def test_reduced_surface_traction_matches_full_traction_on_constrained_state():
+def test_surface_reduction():
     """Test the Schur-complement traction against the full traction operator."""
-    mesh = (5, 10)
-    sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0)
+    mesh = (5, 12)
+    lmax = 5
+    sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0, lmax=lmax)
 
     surf = np.random.default_rng(1).uniform(low=-1e-3, high=1e-3, size=sys.nsurf)
     state = sys._reconstruct_state(surf).ravel()
