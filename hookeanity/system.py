@@ -219,8 +219,9 @@ class System:
 
         self._std = np.sqrt(2 * self._kbt * self._tf)
 
+        stability_tol = 1e-12
         max_eigenvalue = np.linalg.eigvals(self._trac_red).real.max()
-        assert max_eigenvalue < 0, (
+        assert max_eigenvalue <= stability_tol, (
             f"Unstable mode detected ({max_eigenvalue:.3e}): increase lmax parameter"
         )
         self.info("System ready")
@@ -355,9 +356,31 @@ class System:
                 "surface reduction system. Try adjusting mesh resolution and/or "
                 "lmax."
             )
-        self._trac_red = (
-            self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
+        trac_red = self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
+        rigid = self._surface_rigid_modes()
+        u, singular_values, _ = np.linalg.svd(rigid, full_matrices=False)
+        rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
+        qrigid = u[:, :rank]
+        project_rigid = qrigid @ qrigid.T
+        project_elastic = np.eye(nsurf) - project_rigid
+        self._trac_red = project_elastic @ trac_red @ project_elastic
+
+    def _surface_rigid_modes(self) -> NDArray[np.floating]:
+        """Return translational and rotational rigid modes on the surface."""
+        angles = self.surface_points()[:, 1:]
+        theta, phi = angles.T
+        st = np.sin(theta)
+        positions = np.stack(
+            [st * np.cos(phi), st * np.sin(phi), np.cos(theta)],
+            axis=1,
         )
+
+        modes = np.zeros((self.mesh[1], DIM, 2 * DIM), dtype=float)
+        for axis in range(DIM):
+            modes[:, axis, axis] = 1.0
+            omega = np.eye(DIM)[axis]
+            modes[:, :, DIM + axis] = np.cross(omega, positions)
+        return modes.reshape(self.nsurf, 2 * DIM)
 
     def _reconstruct_state(self, surf: np.ndarray) -> VectorValues:
         """Reconstruct the full state from the surface degrees of freedom."""

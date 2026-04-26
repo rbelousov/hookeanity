@@ -324,12 +324,27 @@ def test_bulk_reconstruction():
 
 
 def test_surface_reduction():
-    """Test the Schur-complement traction against the full traction operator."""
+    """Test the projected Schur-complement traction."""
     mesh = (5, 12)
     lmax = 5
     sys = System(mesh, 2.0, 3.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0, lmax=lmax)
 
     surf = np.random.default_rng(1).uniform(low=-1e-3, high=1e-3, size=sys.nsurf)
-    state = sys._reconstruct_state(surf).ravel()
+    bulk = slice(None, -sys.nsurf)
+    surface = slice(-sys.nsurf, None)
+    raw_trac_red = sys._trac[:, surface] + sys._trac[:, bulk] @ sys._bulk_from_surf
 
-    assert sys._trac_red @ surf == pytest.approx(sys._trac @ state)
+    rigid = sys._surface_rigid_modes()
+    u, singular_values, _ = np.linalg.svd(rigid, full_matrices=False)
+    rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
+    qrigid = u[:, :rank]
+    project_elastic = np.eye(sys.nsurf) - qrigid @ qrigid.T
+
+    state = sys._reconstruct_state(project_elastic @ surf).ravel()
+
+    assert sys._trac_red == pytest.approx(
+        project_elastic @ raw_trac_red @ project_elastic
+    )
+    assert sys._trac_red @ surf == pytest.approx(project_elastic @ (sys._trac @ state))
+    assert sys._trac_red @ rigid == pytest.approx(0, abs=1e-10)
+    assert rigid.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
