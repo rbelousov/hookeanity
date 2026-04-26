@@ -22,11 +22,30 @@ def test_save_and_load(tmp_path):
     lam = 2.0
     mu = 3.0
     dt = 1e-2
+    gamma = 2.5
     f_ext = 0.5
+    f_loc = (0.7, 1.2)
     kbt = 1.5
     lmax = 5
     mesh = (5, 12)
-    system = System(mesh, lam, mu, dt, f_ext, kbt=kbt, lmax=lmax)
+    state = np.random.default_rng(0).uniform(
+        low=-1e-3, high=1e-3, size=(np.prod(mesh), DIM)
+    )
+    method = "trotter"
+    system = System(
+        mesh,
+        lam,
+        mu,
+        dt,
+        f_ext,
+        f_loc=f_loc,
+        kbt=kbt,
+        gamma=gamma,
+        state=state,
+        method=method,
+        rng=123,
+        lmax=lmax,
+    )
     system.save(filepath)
     sample1 = system._rng.random(5)
     assert system.mesh == mesh
@@ -40,10 +59,13 @@ def test_save_and_load(tmp_path):
     assert loaded._lam == lam
     assert loaded._mu == mu
     assert loaded._dt == dt
+    assert loaded._gamma == gamma
     assert loaded._ext == f_ext
+    assert loaded._loc == f_loc
     assert loaded._kbt == kbt
     assert loaded.lmax == lmax
-    assert loaded._method == "euler"
+    assert loaded._method == method
+    assert loaded._state == pytest.approx(state)
     assert np.all(sample1 == sample2)
 
 
@@ -185,6 +207,9 @@ def test_system_cache(tmp_path):
 
     with pytest.raises(AssertionError, match="spherical-harmonic cutoffs"):
         System(mesh, 2.0, 3.0, 1e-2, cache=cache)
+
+    with pytest.raises(AssertionError, match="time steps"):
+        System(mesh, 2.0, 3.0, 2e-2, lmax=lmax, cache=cache)
 
 
 def _build_operators_old(

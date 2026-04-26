@@ -82,10 +82,12 @@ def attr_f_loc(file: h5py.File) -> tuple[float, float]:
     return (float(arr[0]), float(arr[1]))
 
 
-def attr_lmax(file: h5py.File) -> int | None:
+def attr_lmax(file: h5py.File, required: bool = False) -> int | None:
     """Read spherical-harmonic cutoff from HDF5 attributes."""
     key = "lmax"
     if key not in file.attrs:
+        if required:
+            raise ValueError(f"Missing required attribute: {key}")
         return None
     value = int(attr_any(file, key))
     return None if value < 0 else value
@@ -650,7 +652,7 @@ class System:
             )
 
     def save_cache(self, filepath: str | Path) -> Self:
-        """Save mesh in a cache file.
+        """Save operator data in a cache file.
 
         Args:
             filepath: Path to the cache file
@@ -677,7 +679,7 @@ class System:
             )
             f.create_dataset(
                 "fext",
-                data=self._force[2::DIM],  # [DIM - 2 :: DIM],
+                data=self._force,
                 compression="lzf",
                 shuffle=True,
             )
@@ -686,6 +688,7 @@ class System:
             f.attrs["mesh"] = self.mesh
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
+            f.attrs["dt"] = float(self._dt)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["lmax"] = h5_lmax(self._lmax)
@@ -693,7 +696,7 @@ class System:
         return self
 
     def load_cache(self, filepath: str | Path) -> Self:
-        """Save mesh in a cache file.
+        """Load operator data from a cache file.
 
         Args:
             filepath: Path to the cache file
@@ -709,9 +712,10 @@ class System:
             mesh = attr_mesh(f)
             lam = attr_float(f, "lambda")
             mu = attr_float(f, "mu")
+            dt = attr_float(f, "dt")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
-            lmax = attr_lmax(f)
+            lmax = attr_lmax(f, required=True)
 
             assert mesh == self._mesh, (
                 "Inconsistent meshes between the system and the cache file"
@@ -721,6 +725,9 @@ class System:
             )
             assert mu == self._mu, (
                 "Inconsistent Lamè coefficient mu between the system and the cache file"
+            )
+            assert dt == self._dt, (
+                "Inconsistent time steps between the system and the cache file"
             )
             assert f_ext == self._ext, (
                 "Inconsistent force magnitudes between the system and the cache file"
@@ -738,8 +745,11 @@ class System:
             self._ela = ndfloat_dataset(f, "ela")
             self._bulk_from_surf = ndfloat_dataset(f, "bulk_from_surf")
             self._trac_red = ndfloat_dataset(f, "trac_red")
-            force = np.zeros((mesh[1], DIM))
-            force[:, 2] = ndfloat_dataset(f, "fext")
-            self._force = force.ravel()
+            force = ndfloat_dataset(f, "fext")
+            if force.shape != (self.nsurf,):
+                raise ValueError(
+                    f"Expected cached force shape {(self.nsurf,)}, got {force.shape}"
+                )
+            self._force = force
 
         return self
