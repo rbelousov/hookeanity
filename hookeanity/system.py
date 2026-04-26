@@ -307,15 +307,52 @@ class System:
 
     def _build_surface_reduction(self):
         """Precompute the linear elimination of the bulk degrees of freedom."""
+        rank_tol = 1e-12
+        cond_threshold = 1e12
+        residual_threshold = 1e-8
+
         nsurf = self.nsurf
         bulk = slice(None, -nsurf)
         surf = slice(-nsurf, None)
 
         ebb = self._ela[:, bulk]
         ebs = self._ela[:, surf]
-        self._bulk_from_surf = -np.linalg.lstsq(ebb, ebs, rcond=None)[
-            0
-        ]  # rcond=1e-12 or 1e-10?
+        expected_rank = min(ebb.shape)
+        rank = np.linalg.matrix_rank(ebb, tol=rank_tol)
+        condition = np.linalg.cond(ebb)
+
+        self._bulk_from_surf = -np.linalg.lstsq(ebb, ebs, rcond=None)[0]
+        residual = ebb @ self._bulk_from_surf + ebs
+        residual_norm = np.linalg.norm(residual)
+
+        self._surface_reduction_diagnostics = {
+            "ebb_shape": ebb.shape,
+            "expected_rank": int(expected_rank),
+            "rank": int(rank),
+            "condition_number": float(condition),
+            "condition_threshold": float(cond_threshold),
+            "residual_norm": float(residual_norm),
+            "residual_threshold": float(residual_threshold),
+        }
+
+        if self.verbose:
+            self.info(
+                "  surface reduction diagnostics: "
+                f"rank {rank}/{expected_rank}, cond {condition:.3e}, "
+                f"residual {residual_norm:.3e}"
+            )
+
+        if (
+            rank < expected_rank
+            or not np.isfinite(condition)
+            or condition > cond_threshold
+            or residual_norm > residual_threshold
+        ):
+            raise ValueError(
+                "Failed to eliminate bulk DOFs: ill-conditioned or inconsistent "
+                "surface reduction system. Try adjusting mesh resolution and/or "
+                "lmax."
+            )
         self._trac_red = (
             self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
         )
