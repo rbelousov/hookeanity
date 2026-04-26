@@ -8,6 +8,8 @@ from hookeanity.base import Real, instance
 from hookeanity.angular import (
     fibonacci_points,
     fibonacci_weight,
+    gauss_legendre_fourier_points,
+    gauss_legendre_fourier_weights,
     fourier,
     SphericalHarmonic,
     geodesic_cos,
@@ -182,6 +184,27 @@ def test_fibonacci():
                 assert value == pytest.approx(0, abs=1e-1), f"{{{(i, j)}}}"
 
     assert len(nodes) == 100
+
+
+def test_gauss_legendre_fourier_grid():
+    """Test Gauss-Legendre/Fourier quadrature."""
+    n_lat, n_lon = 8, 16
+    nodes = gauss_legendre_fourier_points(n_lat, n_lon)
+    weights = gauss_legendre_fourier_weights(n_lat, n_lon)
+
+    basis = [
+        SphericalHarmonic((ell, m)) for ell in range(6) for m in range(-ell, ell + 1)
+    ]
+    for i, fi in enumerate(basis):
+        for j, fj in enumerate(basis):
+            value = np.einsum("q,q,q", weights, fi(nodes), fj(nodes))
+            if i == j:
+                assert value == pytest.approx(1, abs=1e-10), f"{{{(i, j)}}}"
+            else:
+                assert value == pytest.approx(0, abs=1e-10), f"{{{(i, j)}}}"
+
+    assert len(nodes) == n_lat * n_lon
+    assert np.sum(weights) == pytest.approx(4 * np.pi)
 
 
 def test_legendre(simple_grid):
