@@ -83,13 +83,11 @@ def attr_f_loc(file: h5py.File) -> tuple[float, float]:
     return (float(arr[0]), float(arr[1]))
 
 
-def attr_lmax(file: h5py.File, required: bool = False) -> int | None:
+def attr_lmax(file: h5py.File) -> int | None:
     """Read spherical-harmonic cutoff from HDF5 attributes."""
     key = "lmax"
     if key not in file.attrs:
-        if required:
-            raise ValueError(f"Missing required attribute: {key}")
-        return None
+        raise ValueError(f"Missing required attribute: {key}")
     value = int(attr_any(file, key))
     return None if value < 0 else value
 
@@ -99,13 +97,11 @@ def h5_lmax(lmax: int | None) -> int:
     return -1 if lmax is None else int(lmax)
 
 
-def attr_init(file: h5py.File, required: bool = False) -> Init:
+def attr_init(file: h5py.File) -> Init:
     """Read surface initialization/projection mode from HDF5 attributes."""
     key = "init"
     if key not in file.attrs:
-        if required:
-            raise ValueError(f"Missing required attribute: {key}")
-        return "no_rigid_motion"
+        raise ValueError(f"Missing required attribute: {key}")
     value = attr_any(file, key)
     if isinstance(value, (bytes, bytearray, np.bytes_)):
         value = bytes(value).decode("utf-8")
@@ -213,7 +209,7 @@ class System:
         self._lmax = None if lmax is None else int(lmax)
         if init not in {"no_rigid_motion", "no_translations", "no_rotations", None}:
             raise ValueError(f"Unknown init option: {init!r}.")
-        self._init = init
+        self._init: Init = init
         self._kbt = kbt
         self._method = method
         self._state = (
@@ -381,19 +377,22 @@ class System:
                 "surface reduction system. Try adjusting mesh resolution and/or "
                 "lmax."
             )
-        trac_red = self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
-        rigid = self._surface_rigid_modes(self._init)
-        u, singular_values, _ = np.linalg.svd(rigid, full_matrices=False)
-        if singular_values.size:
-            rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
-            qrigid = u[:, :rank]
-            project_rigid = qrigid @ qrigid.T
-            project_elastic = np.eye(nsurf) - project_rigid
-            self._trac_red = project_elastic @ trac_red @ project_elastic
-        else:
-            self._trac_red = trac_red
+        self._trac_red = (
+            self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
+        )
+        if self._init is not None:
+            rigid = self._surface_rigid_modes(self._init)
+            u, singular_values, _ = np.linalg.svd(rigid, full_matrices=False)
+            if singular_values.size:
+                rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
+                qrigid = u[:, :rank]
+                project_rigid = qrigid @ qrigid.T
+                project_elastic = np.eye(nsurf) - project_rigid
+                self._trac_red = project_elastic @ self._trac_red @ project_elastic
 
-    def _surface_rigid_modes(self, mode: Init = "no_rigid_motion") -> NDArray[np.floating]:
+    def _surface_rigid_modes(
+        self, mode: Init = "no_rigid_motion"
+    ) -> NDArray[np.floating]:
         """Return translational and rotational rigid modes on the surface."""
         angles = self.surface_points()[:, 1:]
         theta, phi = angles.T
@@ -781,7 +780,7 @@ class System:
             dt = attr_float(f, "dt")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
-            lmax = attr_lmax(f, required=True)
+            lmax = attr_lmax(f)
             init = attr_init(f)
 
             assert mesh == self._mesh, (

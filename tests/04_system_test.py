@@ -2,8 +2,9 @@
 
 import pytest
 import numpy as np
+from typing import cast
 from hookeanity.base import DIM
-from hookeanity.system import System
+from hookeanity.system import System, Init
 from hookeanity.interpolation import Interpolation
 
 
@@ -193,10 +194,10 @@ def test_system_cache(tmp_path):
     mesh = (5, 12)
     lmax = 5
     cache = tmp_path / "cache.5x6.l2m3.h5"
-    sys1 = System(mesh, 2.0, 3.0, 1e-2, lmax=lmax)
+    sys1 = System(mesh, 2.0, 3.0, 1e-2, lmax=lmax, init="no_translations")
     sys1.save_cache(cache)
 
-    sys2 = System(mesh, 2.0, 3.0, 1e-2, lmax=lmax, cache=cache)
+    sys2 = System(mesh, 2.0, 3.0, 1e-2, lmax=lmax, init="no_translations", cache=cache)
     assert sys2.lmax == sys1.lmax
     assert np.all(sys1._grid == sys2._grid)
     assert np.all(sys1._trac == sys2._trac)
@@ -209,7 +210,10 @@ def test_system_cache(tmp_path):
         System(mesh, 2.0, 3.0, 1e-2, cache=cache)
 
     with pytest.raises(AssertionError, match="time steps"):
-        System(mesh, 2.0, 3.0, 2e-2, lmax=lmax, cache=cache)
+        System(mesh, 2.0, 3.0, 2e-2, lmax=lmax, init="no_translations", cache=cache)
+
+    with pytest.raises(AssertionError, match="init projection modes"):
+        System(mesh, 2.0, 3.0, 1e-2, lmax=lmax, cache=cache)
 
 
 def _build_operators_old(
@@ -363,13 +367,13 @@ def test_surface_reduction_init_modes(
     init: str | None, left_mode: str | None, right_mode: str | None
 ):
     """Test traction reduction under configurable rigid-motion projections."""
-    sys = System((5, 12), 2.0, 3.0, 1e-2, f_ext=0.0, kbt=0.0, lmax=5, init=init)
+    sys = System((5, 12), 2.0, 3.0, 1e-2, f_ext=0.0, kbt=0.0, lmax=5, init=cast(Init, init))
     bulk = slice(None, -sys.nsurf)
     surface = slice(-sys.nsurf, None)
     raw_trac_red = sys._trac[:, surface] + sys._trac[:, bulk] @ sys._bulk_from_surf
 
-    left_modes = sys._surface_rigid_modes(left_mode)
-    right_modes = sys._surface_rigid_modes(right_mode)
+    left_modes = sys._surface_rigid_modes(cast(Init, left_mode))
+    right_modes = sys._surface_rigid_modes(cast(Init, right_mode))
 
     def projector(modes: np.ndarray) -> np.ndarray:
         if modes.shape[1] == 0:
