@@ -348,3 +348,42 @@ def test_surface_reduction():
     assert sys._trac_red @ surf == pytest.approx(project_elastic @ (sys._trac @ state))
     assert sys._trac_red @ rigid == pytest.approx(0, abs=1e-10)
     assert rigid.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
+
+
+@pytest.mark.parametrize(
+    ("init", "left_mode", "right_mode"),
+    [
+        ("no_rigid_motion", "no_rigid_motion", "no_rigid_motion"),
+        ("no_translations", "no_translations", "no_translations"),
+        ("no_rotations", "no_rotations", "no_rotations"),
+        (None, None, None),
+    ],
+)
+def test_surface_reduction_init_modes(
+    init: str | None, left_mode: str | None, right_mode: str | None
+):
+    """Test traction reduction under configurable rigid-motion projections."""
+    sys = System((5, 12), 2.0, 3.0, 1e-2, f_ext=0.0, kbt=0.0, lmax=5, init=init)
+    bulk = slice(None, -sys.nsurf)
+    surface = slice(-sys.nsurf, None)
+    raw_trac_red = sys._trac[:, surface] + sys._trac[:, bulk] @ sys._bulk_from_surf
+
+    left_modes = sys._surface_rigid_modes(left_mode)
+    right_modes = sys._surface_rigid_modes(right_mode)
+
+    def projector(modes: np.ndarray) -> np.ndarray:
+        if modes.shape[1] == 0:
+            return np.eye(sys.nsurf)
+        u, singular_values, _ = np.linalg.svd(modes, full_matrices=False)
+        rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
+        return np.eye(sys.nsurf) - u[:, :rank] @ u[:, :rank].T
+
+    pl = projector(left_modes)
+    pr = projector(right_modes)
+    expected = pl @ raw_trac_red @ pr
+    assert sys._trac_red == pytest.approx(expected)
+
+    if left_modes.shape[1]:
+        assert left_modes.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
+    if right_modes.shape[1]:
+        assert sys._trac_red @ right_modes == pytest.approx(0, abs=1e-10)

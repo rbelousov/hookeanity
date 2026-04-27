@@ -4,7 +4,7 @@ Attributes:
     Seed (typing.TypeAlias): Random-number generator seed
 """
 
-from typing import cast, Any, Self, TypeAlias
+from typing import cast, Any, Literal, Self, TypeAlias
 import numpy as np
 from scipy.sparse.linalg import expm_multiply, LinearOperator
 from numpy.typing import NDArray
@@ -16,6 +16,7 @@ from pathlib import Path
 from .logging import logger
 
 Seed: TypeAlias = int | np.integer
+Init: TypeAlias = Literal["no_rigid_motion", "no_translations", "no_rotations"] | None
 
 
 def attr_any(file: h5py.File, key: str) -> Any:
@@ -98,6 +99,25 @@ def h5_lmax(lmax: int | None) -> int:
     return -1 if lmax is None else int(lmax)
 
 
+def attr_init(file: h5py.File, required: bool = False) -> Init:
+    """Read surface initialization/projection mode from HDF5 attributes."""
+    key = "init"
+    if key not in file.attrs:
+        if required:
+            raise ValueError(f"Missing required attribute: {key}")
+        return "no_rigid_motion"
+    value = attr_any(file, key)
+    if isinstance(value, (bytes, bytearray, np.bytes_)):
+        value = bytes(value).decode("utf-8")
+    elif value is not None and not isinstance(value, str):
+        raise ValueError(f"Expected {key} to be string or null, got {type(value)}")
+    if value == "none":
+        value = None
+    if value not in {"no_rigid_motion", "no_translations", "no_rotations", None}:
+        raise ValueError(f"Unknown {key} option: {value!r}")
+    return cast(Init, value)
+
+
 def ndfloat_dataset(file: h5py.File, key: str) -> NDArray[np.floating]:
     """Load numpy array of floating-point numbers from an HDF5 file handle.
 
@@ -155,6 +175,7 @@ class System:
         verbose: bool = False,
         cache: str | Path | None = None,
         lmax: int | None = None,
+        init: Init = "no_rigid_motion",
     ):
         """Initialize the simulation system.
 
@@ -173,6 +194,7 @@ class System:
             verbose: Log the initialization
             cache: Path to the cached numerical data
             lmax: Maximum order of the spherical harmonic expansion
+            init: Surface projection mode for reduced traction
 
         Raises:
             ValueError: On unknown integration method
@@ -189,6 +211,9 @@ class System:
         self._ext = f_ext
         self._loc = f_loc
         self._lmax = None if lmax is None else int(lmax)
+        if init not in {"no_rigid_motion", "no_translations", "no_rotations", None}:
+            raise ValueError(f"Unknown init option: {init!r}.")
+        self._init = init
         self._kbt = kbt
         self._method = method
         self._state = (
@@ -357,15 +382,18 @@ class System:
                 "lmax."
             )
         trac_red = self._trac[:, surf] + self._trac[:, bulk] @ self._bulk_from_surf
-        rigid = self._surface_rigid_modes()
+        rigid = self._surface_rigid_modes(self._init)
         u, singular_values, _ = np.linalg.svd(rigid, full_matrices=False)
-        rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
-        qrigid = u[:, :rank]
-        project_rigid = qrigid @ qrigid.T
-        project_elastic = np.eye(nsurf) - project_rigid
-        self._trac_red = project_elastic @ trac_red @ project_elastic
+        if singular_values.size:
+            rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
+            qrigid = u[:, :rank]
+            project_rigid = qrigid @ qrigid.T
+            project_elastic = np.eye(nsurf) - project_rigid
+            self._trac_red = project_elastic @ trac_red @ project_elastic
+        else:
+            self._trac_red = trac_red
 
-    def _surface_rigid_modes(self) -> NDArray[np.floating]:
+    def _surface_rigid_modes(self, mode: Init = "no_rigid_motion") -> NDArray[np.floating]:
         """Return translational and rotational rigid modes on the surface."""
         angles = self.surface_points()[:, 1:]
         theta, phi = angles.T
@@ -375,12 +403,23 @@ class System:
             axis=1,
         )
 
-        modes = np.zeros((self.mesh[1], DIM, 2 * DIM), dtype=float)
+        include_translations = mode in {"no_rigid_motion", "no_translations"}
+        include_rotations = mode in {"no_rigid_motion", "no_rotations"}
+        nmodes = DIM * int(include_translations) + DIM * int(include_rotations)
+        if nmodes == 0:
+            return np.zeros((self.nsurf, 0), dtype=float)
+
+        modes = np.zeros((self.mesh[1], DIM, nmodes), dtype=float)
+        idx = 0
         for axis in range(DIM):
-            modes[:, axis, axis] = 1.0
-            omega = np.eye(DIM)[axis]
-            modes[:, :, DIM + axis] = np.cross(omega, positions)
-        return modes.reshape(self.nsurf, 2 * DIM)
+            if include_translations:
+                modes[:, axis, idx] = 1.0
+                idx += 1
+            if include_rotations:
+                omega = np.eye(DIM)[axis]
+                modes[:, :, idx] = np.cross(omega, positions)
+                idx += 1
+        return modes.reshape(self.nsurf, nmodes)
 
     def _reconstruct_state(self, surf: np.ndarray) -> VectorValues:
         """Reconstruct the full state from the surface degrees of freedom."""
@@ -585,6 +624,7 @@ class System:
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["lmax"] = h5_lmax(self._lmax)
+            f.attrs["init"] = "none" if self._init is None else str(self._init)
             f.attrs["kT"] = float(self._kbt)
             f.attrs["method"] = str(self._method)
             f.attrs["rng_bit_generator"] = type(self._rng.bit_generator).__name__
@@ -639,6 +679,7 @@ class System:
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
             lmax = attr_lmax(f)
+            init = attr_init(f)
             kbt = attr_float(f, "kT")
             method = decode_text(attr_any(f, "method"))
 
@@ -672,6 +713,7 @@ class System:
                 verbose=verbose,
                 cache=cache,
                 lmax=lmax,
+                init=init,
             )
 
     def save_cache(self, filepath: str | Path) -> Self:
@@ -715,6 +757,7 @@ class System:
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["lmax"] = h5_lmax(self._lmax)
+            f.attrs["init"] = "none" if self._init is None else str(self._init)
 
         return self
 
@@ -739,6 +782,7 @@ class System:
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
             lmax = attr_lmax(f, required=True)
+            init = attr_init(f)
 
             assert mesh == self._mesh, (
                 "Inconsistent meshes between the system and the cache file"
@@ -760,6 +804,9 @@ class System:
             )
             assert lmax == self._lmax, (
                 "Inconsistent spherical-harmonic cutoffs between the system and the cache file"
+            )
+            assert init == self._init, (
+                "Inconsistent init projection modes between the system and the cache file"
             )
 
             # Datasets
