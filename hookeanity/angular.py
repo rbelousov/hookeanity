@@ -36,9 +36,7 @@ def fibonacci_weight(n: int) -> float:
     return 4 * np.pi / n
 
 
-def gauss_legendre_fourier_points(
-    n_latitude: int, n_longitude: int | None = None
-) -> NDArray[np.floating]:
+def gauss_legendre_fourier_points(n_latitude: int) -> NDArray[np.floating]:
     r"""Return tensor-product Gauss-Legendre/Fourier points on a unit sphere.
 
     The grid uses Gauss-Legendre nodes in :math:`\mu=\cos(\theta)` and equally
@@ -46,33 +44,29 @@ def gauss_legendre_fourier_points(
 
     Args:
         n_latitude: Number of Gauss-Legendre nodes in latitude
-        n_longitude: Number of Fourier nodes in longitude; defaults to ``2*n_latitude``
 
     Returns:
         Array of shape ``(n_latitude * n_longitude, 2)`` containing
         ``(theta, phi)`` points
     """
-    n_longitude = 2 * n_latitude if n_longitude is None else n_longitude
+    n_longitude = 2 * n_latitude
     mu, _ = roots_legendre(n_latitude)
     theta = np.arccos(mu)
     phi = 2 * np.pi * np.arange(n_longitude) / n_longitude
     return np.array([[th, ph] for th in theta for ph in phi], dtype=float)
 
 
-def gauss_legendre_fourier_weights(
-    n_latitude: int, n_longitude: int | None = None
-) -> NDArray[np.floating]:
+def gauss_legendre_fourier_weights(n_latitude: int) -> NDArray[np.floating]:
     """Return quadrature weights for a Gauss-Legendre/Fourier sphere grid.
 
     Args:
         n_latitude: Number of Gauss-Legendre nodes in latitude
-        n_longitude: Number of Fourier nodes in longitude; defaults to ``2*n_latitude``
 
     Returns:
         One-dimensional array of weights aligned with
         :func:`gauss_legendre_fourier_points`
     """
-    n_longitude = 2 * n_latitude if n_longitude is None else n_longitude
+    n_longitude = 2 * n_latitude
     _, lat_weights = roots_legendre(n_latitude)
     lon_weight = 2 * np.pi / n_longitude
     return np.repeat(lat_weights, n_longitude) * lon_weight

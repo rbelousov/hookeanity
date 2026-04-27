@@ -189,8 +189,8 @@ def test_fibonacci():
 def test_gauss_legendre_fourier_grid():
     """Test Gauss-Legendre/Fourier quadrature."""
     n_lat, n_lon = 8, 16
-    nodes = gauss_legendre_fourier_points(n_lat, n_lon)
-    weights = gauss_legendre_fourier_weights(n_lat, n_lon)
+    nodes = gauss_legendre_fourier_points(n_lat)
+    weights = gauss_legendre_fourier_weights(n_lat)
 
     basis = [
         SphericalHarmonic((ell, m)) for ell in range(6) for m in range(-ell, ell + 1)
