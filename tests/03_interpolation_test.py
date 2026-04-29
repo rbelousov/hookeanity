@@ -7,10 +7,13 @@ from hookeanity.base import DIM, ScalarField, instance, Real, Point, Grid, Scala
 from hookeanity.interpolation import Interpolation
 
 
-@pytest.fixture(scope="module", params=[
-    ("fibonacci", (12, 144), 2e-1),
-    ("gauss-legendre-fourier", (12, 12), 3e-1),
-])
+@pytest.fixture(
+    scope="module",
+    params=[
+        ("fibonacci", (12, 144), 2e-1),
+        ("gauss-legendre-fourier", (12, 12), 3e-1),
+    ],
+)
 def interp(request):
     """Return Interpolation object with different grids."""
     grid, res, tol = request.param
@@ -143,14 +146,14 @@ def random_points(n: int, sz: int) -> np.ndarray:
 
 
 @pytest.mark.parametrize(
-    "angular_grid, resolution, nangles", 
+    "angular_grid, resolution, nangles",
     [
-        ('fibonacci', (5, 5), 5), 
-        ('gauss-legendre-fourier', (5, 5), 50),
-    ]
+        ("fibonacci", (5, 5), 5),
+        ("gauss-legendre-fourier", (5, 5), 50),
+    ],
 )
 def test_npoints(angular_grid, resolution, nangles):
-    """Test construction of resolution, mesh and number of points of the mesh"""
+    """Test construction of resolution, mesh and number of points of the mesh."""
     inter = Interpolation(resolution, angular_grid=angular_grid)
 
     assert inter.resolution == resolution
@@ -160,7 +163,7 @@ def test_npoints(angular_grid, resolution, nangles):
     assert len(inter) == resolution[0] * nangles
 
 
-@pytest.mark.parametrize("angular_grid", ['fibonacci', 'gauss-legendre-fourier'])
+@pytest.mark.parametrize("angular_grid", ["fibonacci", "gauss-legendre-fourier"])
 def test_transform(angular_grid):
     """Test `Interpolation.transform()` and `Interpolation.inverse()`."""
     inter = Interpolation((5, 5), angular_grid=angular_grid)
@@ -185,7 +188,7 @@ def test_gauss_legendre_weights():
     assert np.sum(inter._aws) == pytest.approx(4 * np.pi)
 
 
-@pytest.mark.parametrize("angular_grid", ['fibonacci', 'gauss-legendre-fourier'])
+@pytest.mark.parametrize("angular_grid", ["fibonacci", "gauss-legendre-fourier"])
 def test_partial_r(scalar, scalar_r, angular_grid):
     """Test `Interpolation.partial_r`."""
     inter = Interpolation((5, 5), angular_grid=angular_grid)

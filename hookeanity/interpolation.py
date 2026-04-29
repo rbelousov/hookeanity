@@ -7,12 +7,13 @@ from numpy.typing import NDArray
 from .base import DIM, Point, Grid, VectorValues, instance
 from .radial import RadialPolynomial
 from .angular import (
-    fibonacci_points, 
-    fibonacci_weight, 
+    fibonacci_points,
+    fibonacci_weight,
     gauss_legendre_fourier_points,
     gauss_legendre_fourier_weights,
-    MaternInterpolator
+    MaternInterpolator,
 )
+
 
 class Interpolation:
     """Expansion of a scalar-valued function in spherical coordinates.
@@ -35,7 +36,7 @@ class Interpolation:
         self,
         resolution: tuple[int, int],
         lmax: int | None = None,
-        angular_grid: str | str = 'fibonacci'
+        angular_grid: str | str = "fibonacci",
     ):
         """Initialize interpolation on the given resolution.
 
@@ -49,10 +50,10 @@ class Interpolation:
         self._radii, self._rws = RadialPolynomial.quadrature(resolution[0] - 1)
 
         self._resolution = resolution
-        if angular_grid == 'fibonacci':
+        if angular_grid == "fibonacci":
             self._angles = fibonacci_points(resolution[1])
             self._aws = np.full(resolution[1], fibonacci_weight(resolution[1]))
-        elif angular_grid == 'gauss-legendre-fourier':
+        elif angular_grid == "gauss-legendre-fourier":
             self._angles = gauss_legendre_fourier_points(resolution[1])
             self._aws = gauss_legendre_fourier_weights(resolution[1])
         else:
@@ -244,7 +245,7 @@ class Interpolation:
     def mesh(self) -> tuple[int, int]:
         """Return mesh specification of the interpolation grid."""
         return self.nradii, self.nangles
-    
+
     @property
     def resolution(self) -> tuple[int, int]:
         """Return number of radial points and angular resolution parameter."""

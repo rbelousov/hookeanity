@@ -2,8 +2,9 @@
 
 import pytest
 import numpy as np
+from typing import cast
 from hookeanity.base import DIM
-from hookeanity.system import System
+from hookeanity.system import System, Init
 from hookeanity.interpolation import Interpolation
 
 
@@ -12,16 +13,18 @@ GRID_CONFIGS = [
     ("gauss-legendre-fourier", (5, 5), 250, 15),
 ]
 
-@pytest.fixture(scope="module", params=[
-    ("fibonacci", (5, 12), 60, 5),
-    ("gauss-legendre-fourier", (4, 5), 200 , 15),
-])
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        ("fibonacci", (5, 12), 60, 5),
+        ("gauss-legendre-fourier", (4, 5), 200, 15),
+    ],
+)
 def system(request):
     """Return System object for different grids, with a random initial state."""
     angular_grid, resolution, npoints, lmax = request.param
-    state = np.random.default_rng(0).uniform(
-        low=-1e-3, high=1e-3, size=(npoints, DIM)
-    )
+    state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
     sys = System(
         resolution,
         lam=1.0,
@@ -30,14 +33,18 @@ def system(request):
         lmax=lmax,
         angular_grid=angular_grid,
         kbt=0.0,
-        state=state
+        state=state,
     )
     return sys
 
-@pytest.fixture(scope="module", params=[
-    ("fibonacci", (5, 12), 5),
-    ("gauss-legendre-fourier", (4, 5), 15),
-])
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        ("fibonacci", (5, 12), 5),
+        ("gauss-legendre-fourier", (4, 5), 15),
+    ],
+)
 def system_zero_state(request):
     """Return System object for different grids, with the default inital state."""
     angular_grid, resolution, lmax = request.param
@@ -72,9 +79,7 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     kbt = 1.5
     method = "trotter"
 
-    state = np.random.default_rng(0).uniform(
-        low=-1e-3, high=1e-3, size=(npoints, DIM)
-    )
+    state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
 
     system = System(
         resolution,
@@ -89,7 +94,7 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
         method=method,
         rng=123,
         lmax=lmax,
-        angular_grid=angular_grid
+        angular_grid=angular_grid,
     )
 
     system.save(filepath)
@@ -136,8 +141,7 @@ def test_stress_divergence(system):
     expected = (
         (sys._mu + sys._lam)
         * np.einsum("lanb,nb->la", grad_div, sys._state, optimize=True)
-        + sys._mu
-        * np.einsum("ln,na->la", laplacian, sys._state, optimize=True)
+        + sys._mu * np.einsum("ln,na->la", laplacian, sys._state, optimize=True)
     ).ravel()
 
     ndof = sys.ndof
@@ -204,34 +208,35 @@ def test_system_smoke(system_zero_state):
     assert sys._state == pytest.approx(1, abs=1e-3)
 
     sys = System(
-        system_zero_state.resolution, 
-        1.0, 
-        1.0, 
-        1e-2, 
-        verbose=False, 
-        lmax=system_zero_state.lmax
-        )()
+        system_zero_state.resolution,
+        1.0,
+        1.0,
+        1e-2,
+        verbose=False,
+        lmax=system_zero_state.lmax,
+    )()
     assert sys._kbt == 1
     assert sys._state != pytest.approx(1, abs=1e-3)
 
     sys_n = System(
-        system_zero_state.resolution, 
-        1.0, 
-        1.0, 
-        1e-2, 
-        f_ext=10, 
-        f_loc=(0, 0), 
-        kbt=0.0, lmax=system_zero_state.lmax
+        system_zero_state.resolution,
+        1.0,
+        1.0,
+        1e-2,
+        f_ext=10,
+        f_loc=(0, 0),
+        kbt=0.0,
+        lmax=system_zero_state.lmax,
     )
     sys_s = System(
-        system_zero_state.resolution, 
-        1.0, 
-        1.0, 
-        1e-2, 
-        f_ext=10, 
-        f_loc=(np.pi, 0), 
-        kbt=0.0, 
-        lmax=system_zero_state.lmax
+        system_zero_state.resolution,
+        1.0,
+        1.0,
+        1e-2,
+        f_ext=10,
+        f_loc=(np.pi, 0),
+        kbt=0.0,
+        lmax=system_zero_state.lmax,
     )
     assert not (sys_n._force == pytest.approx(sys_s._force))
     sys_n()()()
@@ -254,14 +259,14 @@ def test_system_smoke(system_zero_state):
 
     sys_strang = System(
         system_zero_state.resolution,
-        1.0, 
-        1.0, 
-        1e-2, 
-        f_ext=10, 
-        f_loc=(0, 0), 
-        kbt=0.0, 
-        method="strang", 
-        lmax=system_zero_state.lmax
+        1.0,
+        1.0,
+        1e-2,
+        f_ext=10,
+        f_loc=(0, 0),
+        kbt=0.0,
+        method="strang",
+        lmax=system_zero_state.lmax,
     )
     sys_strang()
     assert np.isfinite(sys_strang._state).all()
@@ -271,13 +276,29 @@ def test_system_smoke(system_zero_state):
 def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
     """Test saving and loading cache data for `System` objects."""
     cache = tmp_path / "cache.5x6.l2m3.h5"
-    sys1 = System(resolution, 2.0, 2.0, 1e-2, lmax=lmax, angular_grid=angular_grid)
+    sys1 = System(
+        resolution,
+        2.0,
+        2.0,
+        1e-2,
+        lmax=lmax,
+        angular_grid=angular_grid,
+        init="no_translations",
+    )
     sys1.save_cache(cache)
-
-    sys2 = System(resolution, 2.0, 2.0, 1e-2, lmax=lmax, cache=cache, angular_grid=angular_grid)
-    
+    sys2 = System(
+        resolution,
+        2.0,
+        2.0,
+        1e-2,
+        lmax=lmax,
+        cache=cache,
+        angular_grid=angular_grid,
+        init="no_translations",
+    )
     assert sys1.npoints == npoints
     assert sys2.npoints == npoints
+
     assert sys2.lmax == sys1.lmax
     assert np.all(sys1._grid == sys2._grid)
     assert np.all(sys1._trac == sys2._trac)
@@ -290,7 +311,16 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
         System(resolution, 2.0, 2.0, 1e-2, cache=cache, angular_grid=angular_grid)
 
     with pytest.raises(AssertionError, match="time steps"):
-        System(resolution, 2.0, 2.0, 2e-2, lmax=lmax, cache=cache, angular_grid=angular_grid)
+        System(
+            resolution,
+            2.0,
+            2.0,
+            2e-2,
+            lmax=lmax,
+            cache=cache,
+            angular_grid=angular_grid,
+            init="no_translations",
+        )
 
 
 def _build_operators_old(
@@ -300,7 +330,7 @@ def _build_operators_old(
     mu: float,
     f_ext: float,
     f_loc: tuple[float, float],
-    angular_grid: str, 
+    angular_grid: str,
     lmax: int,
 ):
     """Implement `_build_operators` according to the old method.
@@ -381,25 +411,25 @@ def test_build_operators(angular_grid, resolution, npoints, lmax):
     f_loc = (0.7, 1.2)
 
     sys = System(
-        resolution, 
-        lam, 
-        mu, 
-        dt, 
-        f_ext=f_ext, 
-        f_loc=f_loc, 
-        kbt=0.0, 
-        angular_grid=angular_grid, 
-        lmax=lmax
-        )
+        resolution,
+        lam,
+        mu,
+        dt,
+        f_ext=f_ext,
+        f_loc=f_loc,
+        kbt=0.0,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
     trac_old, ela_old, force_old = _build_operators_old(
-        resolution=resolution, 
+        resolution=resolution,
         mesh=sys.mesh,
-        lam=lam, 
-        mu=mu, 
-        f_ext=f_ext, 
-        f_loc=f_loc, 
-        angular_grid=angular_grid, 
-        lmax=lmax
+        lam=lam,
+        mu=mu,
+        f_ext=f_ext,
+        f_loc=f_loc,
+        angular_grid=angular_grid,
+        lmax=lmax,
     )
 
     assert sys._trac.shape == trac_old.shape
@@ -414,7 +444,17 @@ def test_build_operators(angular_grid, resolution, npoints, lmax):
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_bulk_reconstruction(angular_grid, resolution, npoints, lmax):
     """Test the reduced bulk map reproduces the direct solve from Eq."""
-    sys = System(resolution, 2.0, 2.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0, angular_grid=angular_grid, lmax=lmax)
+    sys = System(
+        resolution,
+        2.0,
+        2.0,
+        1e-2,
+        f_ext=0.5,
+        f_loc=(0.7, 1.2),
+        kbt=0.0,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
 
     surf = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=sys.nsurf)
     bulk = -np.linalg.solve(
@@ -428,7 +468,17 @@ def test_bulk_reconstruction(angular_grid, resolution, npoints, lmax):
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_surface_reduction(angular_grid, resolution, npoints, lmax):
     """Test the projected Schur-complement traction."""
-    sys = System(resolution, 2.0, 2.0, 1e-2, f_ext=0.5, f_loc=(0.7, 1.2), kbt=0.0, angular_grid=angular_grid, lmax=lmax)
+    sys = System(
+        resolution,
+        2.0,
+        2.0,
+        1e-2,
+        f_ext=0.5,
+        f_loc=(0.7, 1.2),
+        kbt=0.0,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
 
     surf = np.random.default_rng(1).uniform(low=-1e-3, high=1e-3, size=sys.nsurf)
     bulk = slice(None, -sys.nsurf)
@@ -449,3 +499,44 @@ def test_surface_reduction(angular_grid, resolution, npoints, lmax):
     assert sys._trac_red @ surf == pytest.approx(project_elastic @ (sys._trac @ state))
     assert sys._trac_red @ rigid == pytest.approx(0, abs=1e-10)
     assert rigid.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
+
+
+@pytest.mark.parametrize(
+    ("init", "left_mode", "right_mode"),
+    [
+        ("no_rigid_motion", "no_rigid_motion", "no_rigid_motion"),
+        ("no_translations", "no_translations", "no_translations"),
+        ("no_rotations", "no_rotations", "no_rotations"),
+        (None, None, None),
+    ],
+)
+def test_surface_reduction_init_modes(
+    init: str | None, left_mode: str | None, right_mode: str | None
+):
+    """Test traction reduction under configurable rigid-motion projections."""
+    sys = System(
+        (5, 12), 2.0, 3.0, 1e-2, f_ext=0.0, kbt=0.0, lmax=5, init=cast(Init, init)
+    )
+    bulk = slice(None, -sys.nsurf)
+    surface = slice(-sys.nsurf, None)
+    raw_trac_red = sys._trac[:, surface] + sys._trac[:, bulk] @ sys._bulk_from_surf
+
+    left_modes = sys._surface_rigid_modes(cast(Init, left_mode))
+    right_modes = sys._surface_rigid_modes(cast(Init, right_mode))
+
+    def projector(modes: np.ndarray) -> np.ndarray:
+        if modes.shape[1] == 0:
+            return np.eye(sys.nsurf)
+        u, singular_values, _ = np.linalg.svd(modes, full_matrices=False)
+        rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
+        return np.eye(sys.nsurf) - u[:, :rank] @ u[:, :rank].T
+
+    pl = projector(left_modes)
+    pr = projector(right_modes)
+    expected = pl @ raw_trac_red @ pr
+    assert sys._trac_red == pytest.approx(expected)
+
+    if left_modes.shape[1]:
+        assert left_modes.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
+    if right_modes.shape[1]:
+        assert sys._trac_red @ right_modes == pytest.approx(0, abs=1e-10)
