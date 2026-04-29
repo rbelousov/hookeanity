@@ -6,13 +6,19 @@ import numpy as np
 from numpy.typing import NDArray
 from .base import DIM, Point, Grid, VectorValues, instance
 from .radial import RadialPolynomial
-from .angular import fibonacci_points, fibonacci_weight, MaternInterpolator
-
+from .angular import (
+    fibonacci_points, 
+    fibonacci_weight, 
+    gauss_legendre_fourier_points,
+    gauss_legendre_fourier_weights,
+    MaternInterpolator
+)
 
 class Interpolation:
     """Expansion of a scalar-valued function in spherical coordinates.
 
     Attributes:
+        _resolution (tuple[int, int]): Number of radial points and angular resolution parameter
         _radii (numpy.NDArray[numpy.floating]): Radial quadrature points
         _rws (numpy.NDArray[numpy.floating]): Radial quadrature weights
         _angles (numpy.NDArray[numpy.floating]): Angular quadrature points (theta, phi)
@@ -27,20 +33,32 @@ class Interpolation:
 
     def __init__(
         self,
-        mesh: tuple[int, int],
+        resolution: tuple[int, int],
         lmax: int | None = None,
+        angular_grid: str | str = 'fibonacci'
     ):
-        """Initialize interpolation on the given mesh.
+        """Initialize interpolation on the given resolution.
 
         Args:
-            mesh: Number of radial and angular grid points
+            resolution: Tuple (nr, nang), where nr is the number of radial points and nang is an angular resolution parameter such that
+                for 'fibonacci', it corresponds to the number of angular points
+                for 'gauss-legendre-fourier', it corresponds to the number of latitudinal nodes
             lmax: Maximum order of the spherical harmonic expansion
+            angular_grid: Type of discretization in the angular component
         """
-        self._radii, self._rws = RadialPolynomial.quadrature(mesh[0] - 1)
-        self._angles = fibonacci_points(mesh[1])
-        self._aws = np.full(mesh[1], fibonacci_weight(mesh[1]))
+        self._radii, self._rws = RadialPolynomial.quadrature(resolution[0] - 1)
 
-        self._radial_functions = [RadialPolynomial(n) for n in range(mesh[0])]
+        self._resolution = resolution
+        if angular_grid == 'fibonacci':
+            self._angles = fibonacci_points(resolution[1])
+            self._aws = np.full(resolution[1], fibonacci_weight(resolution[1]))
+        elif angular_grid == 'gauss-legendre-fourier':
+            self._angles = gauss_legendre_fourier_points(resolution[1])
+            self._aws = gauss_legendre_fourier_weights(resolution[1])
+        else:
+            raise ValueError(f"Unknown angular_grid: {angular_grid}")
+
+        self._radial_functions = [RadialPolynomial(n) for n in range(resolution[0])]
         self._matern = MaternInterpolator(self._angles, weights=self._aws, lmax=lmax)
         self._angular_functions = list(self._matern)
 
@@ -226,6 +244,11 @@ class Interpolation:
     def mesh(self) -> tuple[int, int]:
         """Return mesh specification of the interpolation grid."""
         return self.nradii, self.nangles
+    
+    @property
+    def resolution(self) -> tuple[int, int]:
+        """Return number of radial points and angular resolution parameter."""
+        return self._resolution
 
     @property
     def lmax(self) -> int:

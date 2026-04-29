@@ -7,6 +7,16 @@ from hookeanity.base import DIM, ScalarField, instance, Real, Point, Grid, Scala
 from hookeanity.interpolation import Interpolation
 
 
+@pytest.fixture(scope="module", params=[
+    ("fibonacci", (12, 144), 2e-1),
+    ("gauss-legendre-fourier", (12, 12), 3e-1),
+])
+def interp(request):
+    """Return Interpolation object with different grids."""
+    grid, res, tol = request.param
+    return Interpolation(res, angular_grid=grid), tol
+
+
 @pytest.fixture
 def scalar() -> ScalarField:
     """Return a test scalar field."""
@@ -132,9 +142,28 @@ def random_points(n: int, sz: int) -> np.ndarray:
     return rng.choice(range(sz), size=n, replace=False)
 
 
-def test_transform():
+@pytest.mark.parametrize(
+    "angular_grid, resolution, nangles", 
+    [
+        ('fibonacci', (5, 5), 5), 
+        ('gauss-legendre-fourier', (5, 5), 50),
+    ]
+)
+def test_npoints(angular_grid, resolution, nangles):
+    """Test construction of resolution, mesh and number of points of the mesh"""
+    inter = Interpolation(resolution, angular_grid=angular_grid)
+
+    assert inter.resolution == resolution
+    assert inter.nradii == resolution[0]
+    assert inter.nangles == nangles
+    assert inter.mesh == (resolution[0], nangles)
+    assert len(inter) == resolution[0] * nangles
+
+
+@pytest.mark.parametrize("angular_grid", ['fibonacci', 'gauss-legendre-fourier'])
+def test_transform(angular_grid):
     """Test `Interpolation.transform()` and `Interpolation.inverse()`."""
-    inter = Interpolation((5, 5))
+    inter = Interpolation((5, 5), angular_grid=angular_grid)
     sz = len(inter)
     shape = (sz, sz)
     transform = inter.transform()
@@ -150,9 +179,16 @@ def test_lmax():
     assert inter.lmax == 3
 
 
-def test_partial_r(scalar, scalar_r):
+def test_gauss_legendre_weights():
+    """Test weights of the Gauss-Legendre-Fourier grid."""
+    inter = Interpolation((6, 6), angular_grid="gauss-legendre-fourier")
+    assert np.sum(inter._aws) == pytest.approx(4 * np.pi)
+
+
+@pytest.mark.parametrize("angular_grid", ['fibonacci', 'gauss-legendre-fourier'])
+def test_partial_r(scalar, scalar_r, angular_grid):
     """Test `Interpolation.partial_r`."""
-    inter = Interpolation((5, 5))
+    inter = Interpolation((5, 5), angular_grid=angular_grid)
     grid = inter.grid()
     values = scalar(grid)
     modes = inter.transform() @ values
@@ -166,9 +202,9 @@ def test_partial_r(scalar, scalar_r):
     assert values_r == pytest.approx(expected, abs=1e-3)
 
 
-def test_partial_theta(scalar, scalar_theta):
+def test_partial_theta(scalar, scalar_theta, interp):
     """Test `Interpolation.partial_theta`."""
-    inter = Interpolation((12, 144))
+    inter, _ = interp
     grid = inter.grid()
 
     values = scalar(grid)
@@ -182,9 +218,9 @@ def test_partial_theta(scalar, scalar_theta):
     assert values_theta == pytest.approx(expected, abs=1e-1)
 
 
-def test_partial_phi(scalar, scalar_phi):
+def test_partial_phi(scalar, scalar_phi, interp):
     """Test `Interpolation.partial_phi`."""
-    inter = Interpolation((12, 144))
+    inter, _ = interp
     grid = inter.grid()
 
     values = scalar(grid)
@@ -322,11 +358,10 @@ def test_z_identity():
     assert values == pytest.approx(expected, abs=precision)
 
 
-def test_partial_x(scalar, scalar_x):
+def test_partial_x(scalar, scalar_x, interp):
     """Test `Interpolation.partial_x`."""
-    inter = Interpolation((12, 144))
+    inter, precision_abs = interp
     grid = inter.grid()
-    precision_abs = 2e-1
 
     indices = random_points(10, len(inter))
     points = grid[indices]
@@ -339,11 +374,10 @@ def test_partial_x(scalar, scalar_x):
     assert values == pytest.approx(expected, abs=precision_abs)
 
 
-def test_partial_y(scalar, scalar_y):
+def test_partial_y(scalar, scalar_y, interp):
     """Test `Interpolation.partial_y`."""
-    inter = Interpolation((12, 144))
+    inter, precision_abs = interp
     grid = inter.grid()
-    precision_abs = 2e-1
 
     indices = random_points(10, len(inter))
     points = grid[indices]
@@ -356,16 +390,16 @@ def test_partial_y(scalar, scalar_y):
     assert values == pytest.approx(expected, abs=precision_abs)
 
 
-def test_partial_z(scalar, scalar_z):
+def test_partial_z(scalar, scalar_z, interp):
     """Test `Interpolation.partial_z`."""
-    inter = Interpolation((12, 144))
-    precision_abs = 2e-1
+    inter, precision_abs = interp
+    grid = inter.grid()
 
     indices = random_points(10, len(inter))
-    points = inter.grid()[indices]
+    points = grid[indices]
 
     oper_z = inter.partial_z()
-    cfs = inter.transform() @ scalar(inter.grid())
+    cfs = inter.transform() @ scalar(grid)
     cfs_z = np.dot(oper_z, cfs)
     values = inter.inverse()[indices] @ cfs_z
     expected = scalar_z(points)

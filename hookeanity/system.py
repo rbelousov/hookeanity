@@ -44,6 +44,25 @@ def attr_float(file: h5py.File, key: str) -> float:
     return float(attr_any(file, key))
 
 
+def attr_resolution(file: h5py.File) -> tuple[int, int]:
+    """Read mesh scheme from an HDF5 file handle attributes.
+
+    Args:
+        file: File handle
+
+    Returns:
+        Resolution specification
+
+    Raises:
+        ValueError When resolution attribute is malformed
+    """
+    key = "resolution"
+    arr = np.asarray(attr_any(file, key))
+    if arr.shape != (2,):
+        raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
+    return (int(arr[0]), int(arr[1]))
+
+
 def attr_mesh(file: h5py.File) -> tuple[int, int]:
     """Read mesh scheme from an HDF5 file handle attributes.
 
@@ -141,7 +160,7 @@ class System:
 
     def __init__(
         self,
-        mesh: tuple[int, int],
+        resolution: tuple[int, int],
         lam: Real,
         mu: Real,
         dt: Real,
@@ -151,6 +170,7 @@ class System:
         gamma: Real = 1.0,
         state: VectorValues | None = None,
         method: str = "euler",
+        angular_grid: str | str = "fibonacci",
         rng: np.random.Generator | Seed | None = None,
         verbose: bool = False,
         cache: str | Path | None = None,
@@ -159,7 +179,7 @@ class System:
         """Initialize the simulation system.
 
         Args:
-            mesh: Number of radial and angular grid points
+            resolution: Number of radial points and angular grid resolution
             lam: Lamé's first parameter
             mu: Lamé's second parameter (shear modulus)
             dt: Integration time step
@@ -169,6 +189,7 @@ class System:
             gamma: Effective dissipative coefficient
             state: Current state of the system defaults to zeros
             method: Integration method ("euler", "trotter", "strang")
+            angular_grid: Type of grid in the angular component ("fibonacci, gauss-legendre-fourier")
             rng: Optional state of the random number generator or seed
             verbose: Log the initialization
             cache: Path to the cached numerical data
@@ -180,8 +201,11 @@ class System:
         """
         if method not in {"euler", "strang", "trotter"}:
             raise ValueError(f"Unknown integration method: {method!r}.")
+        if angular_grid not in {"fibonacci", "gauss-legendre-fourier"}:
+            raise ValueError(f"Unknown angular grid: {angular_grid!r}.")
 
-        self._mesh = mesh
+        self._resolution = resolution
+        self._angular_grid = angular_grid
         self._gamma = gamma
         self._lam = lam
         self._mu = mu
@@ -191,9 +215,6 @@ class System:
         self._lmax = None if lmax is None else int(lmax)
         self._kbt = kbt
         self._method = method
-        self._state = (
-            np.zeros((np.prod(mesh), DIM)) if state is None else np.array(state)
-        )
         self._rng = (
             rng
             if instance(rng, np.random.Generator)
@@ -208,6 +229,9 @@ class System:
         else:
             self.info(f"  loading cached data from {cache}")
             self.load_cache(cache)
+        self._state = (
+            np.zeros((np.prod(self._mesh), DIM)) if state is None else np.array(state)
+        )
 
         self._tf = dt / gamma
         if self._method == "trotter":
@@ -238,16 +262,16 @@ class System:
 
     def _build_operators(self):
         """Build operators for the equations of motion."""
-        mesh = self._mesh
+        inter = Interpolation(self._resolution, lmax=self._lmax, angular_grid=self._angular_grid)
+        self._grid = inter.grid()
+        self._mesh = inter.mesh
+
         ndof = self.ndof
-        nsurf_pts = mesh[1]
+        nsurf_pts = self.mesh[1]
         npoints = self.npoints
         nbulk_pts = npoints - nsurf_pts
         nbulk = self.nbulk
         eye = np.eye(DIM)
-
-        inter = Interpolation(mesh, lmax=self._lmax)
-        self._grid = inter.grid()
 
         # Derivative operators
         self.info("  derivative operator")
@@ -258,7 +282,9 @@ class System:
         )
 
         # partial[p, a, n] = derivative in direction a at point p of basis coeff/vector n
-        partial = np.einsum("mM,aMN,Nn->man", inverse, partial_xyz, transform)
+        partial = np.einsum(
+            "mM,aMN,Nn->man", inverse, partial_xyz, transform, optimize=True
+        )
 
         # Traction operator
         self.info("  elastic traction operator")
@@ -301,7 +327,7 @@ class System:
 
         # Additive forces
         self.info("  additive forces")
-        force = np.zeros((mesh[1], DIM))
+        force = np.zeros((self.mesh[1], DIM))
         force[:, 2] = (self._ext) * np.array(
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
@@ -409,6 +435,11 @@ class System:
         sp = np.sin(angles[:, 1])
         cp = np.cos(angles[:, 1])
         return -np.stack([st2 * cp, st2 * sp, st * ct], axis=1)
+
+    @property
+    def resolution(self) -> tuple[int, int]:
+        """Return resolution defined by the user."""
+        return self._resolution
 
     @property
     def mesh(self) -> tuple[int, int]:
@@ -577,7 +608,7 @@ class System:
             f.create_dataset("state", data=self._state, compression="lzf", shuffle=True)
 
             # Metadata as attributes
-            f.attrs["mesh"] = self.mesh
+            f.attrs["resolution"] = self._resolution
             f.attrs["gamma"] = float(self._gamma)
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
@@ -587,6 +618,7 @@ class System:
             f.attrs["lmax"] = h5_lmax(self._lmax)
             f.attrs["kT"] = float(self._kbt)
             f.attrs["method"] = str(self._method)
+            f.attrs["angular_grid"] = str(self._angular_grid)
             f.attrs["rng_bit_generator"] = type(self._rng.bit_generator).__name__
             f.attrs["rng_state_json"] = json.dumps(
                 self._rng.bit_generator.state, default=json_default
@@ -630,8 +662,7 @@ class System:
             return obj
 
         with h5py.File(filepath, "r") as f:
-            mesh = attr_mesh(f)
-
+            resolution = attr_resolution(f)
             gamma = attr_float(f, "gamma")
             lam = attr_float(f, "lambda")
             mu = attr_float(f, "mu")
@@ -641,6 +672,7 @@ class System:
             lmax = attr_lmax(f)
             kbt = attr_float(f, "kT")
             method = decode_text(attr_any(f, "method"))
+            angular_grid = decode_text(attr_any(f, "angular_grid"))
 
             dset = cast(h5py.Dataset, f["state"])
             state = cast(NDArray[np.floating], dset[()])
@@ -658,7 +690,8 @@ class System:
             rng = np.random.Generator(bitgen)
 
             return cls(
-                mesh=mesh,
+                resolution=resolution,
+                # mesh=mesh,
                 lam=lam,
                 mu=mu,
                 dt=dt,
@@ -668,6 +701,7 @@ class System:
                 gamma=gamma,
                 state=state,
                 method=method,
+                angular_grid=angular_grid,
                 rng=rng,
                 verbose=verbose,
                 cache=cache,
@@ -708,6 +742,7 @@ class System:
             )
 
             # Metadata as attributes
+            f.attrs["resolution"] = self._resolution
             f.attrs["mesh"] = self.mesh
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
@@ -715,6 +750,7 @@ class System:
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["lmax"] = h5_lmax(self._lmax)
+            f.attrs["angular_grid"] = str(self._angular_grid)
 
         return self
 
@@ -732,16 +768,20 @@ class System:
             ValueError On missing cache data in the file
         """
         with h5py.File(filepath, "r") as f:
-            mesh = attr_mesh(f)
+            resolution = attr_resolution(f)
             lam = attr_float(f, "lambda")
             mu = attr_float(f, "mu")
             dt = attr_float(f, "dt")
             f_ext = attr_float(f, "f_ext")
             f_loc = attr_f_loc(f)
             lmax = attr_lmax(f, required=True)
+            angular_grid = attr_any(f, "angular_grid")
 
-            assert mesh == self._mesh, (
-                "Inconsistent meshes between the system and the cache file"
+            assert resolution == self._resolution, (
+                "Inconsistent resolutions between the system and the cache file"
+            )
+            assert angular_grid == self._angular_grid, (
+                "Inconsistent angular grid type between the system and the cache file"
             )
             assert lam == self._lam, (
                 "Inconsistent Lamè coefficient lambda between the system and the cache file"
@@ -763,6 +803,7 @@ class System:
             )
 
             # Datasets
+            self._mesh = attr_mesh(f)
             self._grid = ndfloat_dataset(f, "grid")
             self._trac = ndfloat_dataset(f, "trac")
             self._ela = ndfloat_dataset(f, "ela")
