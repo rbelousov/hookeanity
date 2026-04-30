@@ -2,6 +2,7 @@
 
 import pytest
 import numpy as np
+import xml.etree.ElementTree as ET
 from typing import cast
 from hookeanity.base import DIM
 from hookeanity.system import System, Init
@@ -540,3 +541,117 @@ def test_surface_reduction_init_modes(
         assert left_modes.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
     if right_modes.shape[1]:
         assert sys._trac_red @ right_modes == pytest.approx(0, abs=1e-10)
+
+
+def _vtk_array(root: ET.Element, name: str | None) -> np.ndarray:
+    """Return values from a VTK XML DataArray."""
+    for data_array in root.iter("DataArray"):
+        if data_array.get("Name") == name:
+            return np.fromstring(data_array.text or "", sep=" ")
+    raise AssertionError(f"Missing DataArray {name!r}")
+
+
+def _vtk_points(root: ET.Element) -> np.ndarray:
+    """Return points from a VTK XML file."""
+    data_array = root.find(".//Points/DataArray")
+    assert data_array is not None
+    return np.fromstring(data_array.text or "", sep=" ").reshape(-1, DIM)
+
+
+def _surface_points_cartesian(sys: System) -> np.ndarray:
+    """Return Cartesian coordinates of system surface points."""
+    radius, theta, phi = sys.surface_points().T
+    return np.column_stack(
+        (
+            radius * np.sin(theta) * np.cos(phi),
+            radius * np.sin(theta) * np.sin(phi),
+            radius * np.cos(theta),
+        )
+    )
+
+
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
+    """Test exporting the current surface as a VTK StructuredGrid."""
+    state = np.random.default_rng(0).uniform(
+        low=-1e-3, high=1e-3, size=(npoints, DIM)
+    )
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.0,
+        state=state,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
+
+    dense_resolution = 7
+    assert sys.export_vts(tmp_path, resolution=dense_resolution) is sys
+    filepath = tmp_path / "surface.vts"
+    assert filepath.exists()
+
+    root = ET.parse(filepath).getroot()
+    assert root.get("type") == "StructuredGrid"
+    piece = root.find(".//Piece")
+    assert piece is not None
+    assert piece.get("Extent") == (
+        f"0 {dense_resolution - 1} 0 {dense_resolution - 1} 0 0"
+    )
+
+    points = _vtk_points(root)
+    displacement = _vtk_array(root, "Displacement_Vector").reshape(-1, DIM)
+    magnitude = _vtk_array(root, "Displacement_Magnitude")
+
+    assert points.shape == (dense_resolution * dense_resolution, DIM)
+    assert displacement.shape == points.shape
+    assert magnitude.shape == (len(points),)
+    assert magnitude == pytest.approx(np.linalg.norm(displacement, axis=1))
+    assert np.isfinite(points).all()
+
+
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_export_vtp(tmp_path, angular_grid, resolution, npoints, lmax):
+    """Test exporting the native current surface as VTK PolyData."""
+    state = np.random.default_rng(0).uniform(
+        low=-1e-3, high=1e-3, size=(npoints, DIM)
+    )
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.0,
+        state=state,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
+
+    filepath = tmp_path / "native.vtp"
+    assert sys.export_vtp(filepath) is sys
+    assert filepath.exists()
+
+    root = ET.parse(filepath).getroot()
+    assert root.get("type") == "PolyData"
+    piece = root.find(".//Piece")
+    assert piece is not None
+    assert int(piece.get("NumberOfPoints", "0")) == sys.mesh[1]
+
+    points = _vtk_points(root)
+    displacement = _vtk_array(root, "Displacement_Vector").reshape(-1, DIM)
+    magnitude = _vtk_array(root, "Displacement_Magnitude")
+    point_ids = _vtk_array(root, "Surface_Point_Id").astype(int)
+    connectivity = _vtk_array(root, "connectivity").astype(int)
+    offsets = _vtk_array(root, "offsets").astype(int)
+
+    assert points == pytest.approx(_surface_points_cartesian(sys) + sys.surface())
+    assert displacement == pytest.approx(sys.surface())
+    assert magnitude == pytest.approx(np.linalg.norm(sys.surface(), axis=1))
+    assert np.array_equal(point_ids, np.arange(sys.mesh[1]))
+    assert connectivity.min() >= 0
+    assert connectivity.max() < sys.mesh[1]
+
+    cell_size = 3 if angular_grid == "fibonacci" else 4
+    assert np.all(np.diff(np.r_[0, offsets]) == cell_size)
+    assert int(piece.get("NumberOfPolys", "0")) == len(offsets)

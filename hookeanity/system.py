@@ -2,11 +2,15 @@
 
 Attributes:
     Seed (typing.TypeAlias): Random-number generator seed
+    Init (typing.TypeAlias): Option for traction operator correction ("no_rigid_motion", "no_translations", "no_rotations")
+    IntegrationMethod (typing.TypeAlias): Method of time integration ("euler", "trotter", "strang")
+    AngularMesh (typing.TypeAlias): Option for solid angle meshing ("fibonacci", "gauss-legendre-fourier")
 """
 
 from typing import cast, Any, Literal, Self, TypeAlias
 import numpy as np
 from scipy.sparse.linalg import expm_multiply, LinearOperator
+from scipy.spatial import ConvexHull
 from numpy.typing import NDArray
 from .interpolation import Interpolation
 from .base import DIM, Real, Grid, VectorValues, instance
@@ -17,7 +21,8 @@ from .logging import logger
 
 Seed: TypeAlias = int | np.integer
 Init: TypeAlias = Literal["no_rigid_motion", "no_translations", "no_rotations"] | None
-
+IntegrationMethod: TypeAlias = Literal["euler", "trotter", "strang"]
+AngularMesh: TypeAlias = Literal["fibonacci", "gauss-legendre-fourier"]
 
 def attr_any(file: h5py.File, key: str) -> Any:
     """Read an attribute from an HDF5 file handle.
@@ -185,8 +190,8 @@ class System:
         kbt: Real = 1.0,
         gamma: Real = 1.0,
         state: VectorValues | None = None,
-        method: str = "euler",
-        angular_grid: str | str = "fibonacci",
+        method: IntegrationMethod = "euler",
+        angular_grid: AngularMesh = "fibonacci",
         rng: np.random.Generator | Seed | None = None,
         verbose: bool = False,
         cache: str | Path | None = None,
@@ -864,4 +869,207 @@ class System:
                 )
             self._force = force
 
+        return self
+
+    @staticmethod
+    def _spherical_to_cartesian(points: Grid) -> VectorValues:
+        """Convert spherical `(r, theta, phi)` points to Cartesian points."""
+        radius, theta, phi = np.asarray(points).T
+        return np.column_stack(
+            (
+                radius * np.sin(theta) * np.cos(phi),
+                radius * np.sin(theta) * np.sin(phi),
+                radius * np.cos(theta),
+            )
+        )
+
+    @staticmethod
+    def _export_path(path: str | Path, suffix: str) -> Path:
+        """Return output path for a VTK export."""
+        output = Path(path)
+        if output.suffix:
+            if output.suffix != suffix:
+                raise ValueError(
+                    f"Expected output suffix {suffix!r}, got {output.suffix!r}"
+                )
+        else:
+            output = output / f"surface{suffix}"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        return output
+
+    @staticmethod
+    def _vtk_data(values: np.ndarray) -> str:
+        """Format array values for an ASCII VTK XML data array."""
+        flat = np.asarray(values).ravel()
+        if np.issubdtype(flat.dtype, np.integer):
+            return " ".join(str(int(value)) for value in flat)
+        return " ".join(f"{float(value):.17g}" for value in flat)
+
+    @staticmethod
+    def _vtk_data_array(
+        name: str | None,
+        values: np.ndarray,
+        *,
+        number_of_components: int | None = None,
+        dtype: str = "Float64",
+    ) -> str:
+        """Return one ASCII VTK XML ``DataArray`` block."""
+        attrs = [f'type="{dtype}"']
+        if name is not None:
+            attrs.append(f'Name="{name}"')
+        if number_of_components is not None:
+            attrs.append(f'NumberOfComponents="{number_of_components}"')
+        attrs.append('format="ascii"')
+        return (
+            f"        <DataArray {' '.join(attrs)}>"
+            f"{System._vtk_data(values)}</DataArray>\n"
+        )
+
+    @staticmethod
+    def _orient_faces(
+        faces: NDArray[np.integer], points: VectorValues
+    ) -> NDArray[np.integer]:
+        """Orient surface polygons outward with respect to reference points."""
+        oriented = np.array(faces, dtype=np.int64, copy=True)
+        for i, face in enumerate(oriented):
+            polygon = points[face]
+            normal = np.cross(polygon[1] - polygon[0], polygon[2] - polygon[0])
+            centroid = np.mean(polygon, axis=0)
+            if np.dot(normal, centroid) < 0:
+                oriented[i] = face[::-1]
+        return oriented
+
+    def _surface_faces(self) -> NDArray[np.integer]:
+        """Return native surface polygon connectivity."""
+        points = self._spherical_to_cartesian(self.surface_points())
+        if self._angular_grid == "fibonacci":
+            hull = ConvexHull(points)
+            return self._orient_faces(hull.simplices, points)
+
+        if self._angular_grid == "gauss-legendre-fourier":
+            n_latitude = self.resolution[1]
+            n_longitude = self.mesh[1] // n_latitude
+            faces = []
+            for lat in range(n_latitude - 1):
+                row = lat * n_longitude
+                next_row = (lat + 1) * n_longitude
+                for lon in range(n_longitude):
+                    next_lon = (lon + 1) % n_longitude
+                    faces.append(
+                        [
+                            row + lon,
+                            row + next_lon,
+                            next_row + next_lon,
+                            next_row + lon,
+                        ]
+                    )
+            return self._orient_faces(np.array(faces, dtype=np.int64), points)
+
+        raise ValueError(f"Unknown angular grid: {self._angular_grid!r}")
+
+    def export_vts(self, path: str | Path, resolution: int = 100) -> Self:
+        """Interpolate the current surface and export it as a VTK StructuredGrid.
+
+        Args:
+            path: Output .vts file, or directory when no suffix is given
+            resolution: Number of dense points in each angular direction
+
+        Returns:
+            Self for fluent chaining
+        """
+        if resolution < 2:
+            raise ValueError("VTS export resolution must be at least 2")
+
+        output = self._export_path(path, ".vts")
+        theta = np.linspace(0.0, np.pi, resolution)
+        phi = np.linspace(0.0, 2.0 * np.pi, resolution)
+        theta_grid, phi_grid = np.meshgrid(theta, phi)
+        dense_angles = np.column_stack((theta_grid.ravel(), phi_grid.ravel()))
+
+        radius = float(np.mean(self.surface_points()[:, 0]))
+        reference_points = self._spherical_to_cartesian(
+            np.column_stack((np.full(len(dense_angles), radius), dense_angles))
+        )
+
+        inter = Interpolation(
+            self.resolution,
+            lmax=self.lmax,
+            angular_grid=self._angular_grid,
+        )
+        projection = inter._matern.chi(dense_angles).T * np.sqrt(inter._aws)
+        displacement = projection @ self.surface()
+        points = reference_points + displacement
+        magnitude = np.linalg.norm(displacement, axis=1)
+        extent = f"0 {resolution - 1} 0 {resolution - 1} 0 0"
+
+        content = (
+            '<?xml version="1.0"?>\n'
+            '<VTKFile type="StructuredGrid" version="0.1" byte_order="LittleEndian">\n'
+            f'  <StructuredGrid WholeExtent="{extent}">\n'
+            f'    <Piece Extent="{extent}">\n'
+            '      <PointData Vectors="Displacement_Vector" '
+            'Scalars="Displacement_Magnitude">\n'
+            + self._vtk_data_array(
+                "Displacement_Vector",
+                displacement,
+                number_of_components=DIM,
+            )
+            + self._vtk_data_array("Displacement_Magnitude", magnitude)
+            + "      </PointData>\n"
+            + "      <Points>\n"
+            + self._vtk_data_array(None, points, number_of_components=DIM)
+            + "      </Points>\n"
+            + "    </Piece>\n"
+            + "  </StructuredGrid>\n"
+            + "</VTKFile>\n"
+        )
+        output.write_text(content)
+        return self
+
+    def export_vtp(self, path: str | Path) -> Self:
+        """Export the native current surface as VTK PolyData.
+
+        Args:
+            path: Output .vtp file, or directory when no suffix is given
+
+        Returns:
+            Self for fluent chaining
+        """
+        output = self._export_path(path, ".vtp")
+        displacement = self.surface()
+        points = self._spherical_to_cartesian(self.surface_points()) + displacement
+        magnitude = np.linalg.norm(displacement, axis=1)
+        point_ids = np.arange(len(points), dtype=np.int64)
+        faces = self._surface_faces()
+        connectivity = faces.ravel()
+        offsets = np.cumsum(np.full(len(faces), faces.shape[1], dtype=np.int64))
+
+        content = (
+            '<?xml version="1.0"?>\n'
+            '<VTKFile type="PolyData" version="0.1" byte_order="LittleEndian">\n'
+            "  <PolyData>\n"
+            f'    <Piece NumberOfPoints="{len(points)}" '
+            f'NumberOfPolys="{len(faces)}">\n'
+            '      <PointData Vectors="Displacement_Vector" '
+            'Scalars="Displacement_Magnitude">\n'
+            + self._vtk_data_array(
+                "Displacement_Vector",
+                displacement,
+                number_of_components=DIM,
+            )
+            + self._vtk_data_array("Displacement_Magnitude", magnitude)
+            + self._vtk_data_array("Surface_Point_Id", point_ids, dtype="Int64")
+            + "      </PointData>\n"
+            + "      <Points>\n"
+            + self._vtk_data_array(None, points, number_of_components=DIM)
+            + "      </Points>\n"
+            + "      <Polys>\n"
+            + self._vtk_data_array("connectivity", connectivity, dtype="Int64")
+            + self._vtk_data_array("offsets", offsets, dtype="Int64")
+            + "      </Polys>\n"
+            + "    </Piece>\n"
+            + "  </PolyData>\n"
+            + "</VTKFile>\n"
+        )
+        output.write_text(content)
         return self
