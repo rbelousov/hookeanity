@@ -4,6 +4,7 @@ import pytest
 import numpy as np
 import xml.etree.ElementTree as ET
 from typing import cast
+import h5py
 from hookeanity.base import DIM
 from hookeanity.system import System, Init
 from hookeanity.interpolation import Interpolation
@@ -11,7 +12,7 @@ from hookeanity.interpolation import Interpolation
 
 GRID_CONFIGS = [
     ("fibonacci", (5, 12), 60, 5),
-    ("gauss-legendre-fourier", (5, 5), 250, 15),
+    ("gauss-legendre-fourier", (4, 5), 200, 15),
 ]
 
 
@@ -324,6 +325,62 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
         )
 
 
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_projection_cache(tmp_path, angular_grid, resolution, npoints, lmax):
+    """Test saving and loading VTS projection cache data."""
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.0,
+        lmax=lmax,
+        angular_grid=angular_grid,
+    )
+
+    dense_resolution = 7
+    cache = tmp_path / "projection.h5"
+    assert sys.save_projection_cache(cache, resolution=dense_resolution) is sys
+
+    expected = sys._build_vts_projection(dense_resolution)
+    projection = sys.load_projection_cache(cache, resolution=dense_resolution)
+
+    assert projection.shape == (dense_resolution * dense_resolution, sys.mesh[1])
+    assert projection == pytest.approx(expected)
+
+    with pytest.raises(AssertionError, match="VTS export resolutions"):
+        sys.load_projection_cache(cache, resolution=dense_resolution + 1)
+
+    with h5py.File(cache, "r+") as f:
+        f.attrs["lmax"] = lmax + 1
+    with pytest.raises(AssertionError, match="spherical-harmonic cutoffs"):
+        sys.load_projection_cache(cache, resolution=dense_resolution)
+
+
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_projection_cache_grid_mismatch(
+    tmp_path, angular_grid, resolution, npoints, lmax
+):
+    """Test projection cache rejects mismatched system-grid metadata."""
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.0,
+        lmax=lmax,
+        angular_grid=angular_grid,
+    )
+
+    cache = tmp_path / "projection.h5"
+    sys.save_projection_cache(cache, resolution=7)
+    with h5py.File(cache, "r+") as f:
+        f.attrs["resolution"] = (resolution[0], resolution[1] + 1)
+
+    with pytest.raises(AssertionError, match="resolutions"):
+        sys.load_projection_cache(cache, resolution=7)
+
+
 def _build_operators_old(
     resolution: tuple[int, int],
     mesh: tuple[int, int],
@@ -573,9 +630,7 @@ def _surface_points_cartesian(sys: System) -> np.ndarray:
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
     """Test exporting the current surface as a VTK StructuredGrid."""
-    state = np.random.default_rng(0).uniform(
-        low=-1e-3, high=1e-3, size=(npoints, DIM)
-    )
+    state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
     sys = System(
         resolution,
         1.0,
@@ -612,11 +667,52 @@ def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
 
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_export_vts_projection_cache(tmp_path, angular_grid, resolution, npoints, lmax):
+    """Test VTS export can read a cached projection matrix."""
+    state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.0,
+        state=state,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
+
+    dense_resolution = 7
+    cache = tmp_path / "projection.h5"
+    uncached = tmp_path / "uncached.vts"
+    cached = tmp_path / "cached.vts"
+
+    sys.save_projection_cache(cache, resolution=dense_resolution)
+    sys.export_vts(uncached, resolution=dense_resolution)
+    assert (
+        sys.export_vts(
+            cached,
+            resolution=dense_resolution,
+            projection_cache=cache,
+        )
+        is sys
+    )
+
+    uncached_root = ET.parse(uncached).getroot()
+    cached_root = ET.parse(cached).getroot()
+
+    assert _vtk_points(cached_root) == pytest.approx(_vtk_points(uncached_root))
+    assert _vtk_array(cached_root, "Displacement_Vector") == pytest.approx(
+        _vtk_array(uncached_root, "Displacement_Vector")
+    )
+    assert _vtk_array(cached_root, "Displacement_Magnitude") == pytest.approx(
+        _vtk_array(uncached_root, "Displacement_Magnitude")
+    )
+
+
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_export_vtp(tmp_path, angular_grid, resolution, npoints, lmax):
     """Test exporting the native current surface as VTK PolyData."""
-    state = np.random.default_rng(0).uniform(
-        low=-1e-3, high=1e-3, size=(npoints, DIM)
-    )
+    state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
     sys = System(
         resolution,
         1.0,

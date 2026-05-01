@@ -24,6 +24,7 @@ Init: TypeAlias = Literal["no_rigid_motion", "no_translations", "no_rotations"] 
 IntegrationMethod: TypeAlias = Literal["euler", "trotter", "strang"]
 AngularMesh: TypeAlias = Literal["fibonacci", "gauss-legendre-fourier"]
 
+
 def attr_any(file: h5py.File, key: str) -> Any:
     """Read an attribute from an HDF5 file handle.
 
@@ -718,8 +719,8 @@ class System:
             lmax = attr_lmax(f)
             init = attr_init(f)
             kbt = attr_float(f, "kT")
-            method = decode_text(attr_any(f, "method"))
-            angular_grid = decode_text(attr_any(f, "angular_grid"))
+            method = cast(IntegrationMethod, decode_text(attr_any(f, "method")))
+            angular_grid = cast(AngularMesh, decode_text(attr_any(f, "angular_grid")))
 
             dset = cast(h5py.Dataset, f["state"])
             state = cast(NDArray[np.floating], dset[()])
@@ -871,6 +872,113 @@ class System:
 
         return self
 
+    def _build_vts_projection(self, resolution: int) -> NDArray[np.floating]:
+        """Return the surface-to-VTS projection matrix."""
+        if resolution < 2:
+            raise ValueError("VTS export resolution must be at least 2")
+
+        theta = np.linspace(0.0, np.pi, resolution)
+        phi = np.linspace(0.0, 2.0 * np.pi, resolution)
+        theta_grid, phi_grid = np.meshgrid(theta, phi)
+        dense_angles = np.column_stack((theta_grid.ravel(), phi_grid.ravel()))
+
+        inter = Interpolation(
+            self.resolution,
+            lmax=self.lmax,
+            angular_grid=self._angular_grid,
+        )
+        return cast(
+            NDArray[np.floating],
+            inter._matern.chi(dense_angles).T * np.sqrt(inter._aws),
+        )
+
+    def save_projection_cache(
+        self, filepath: str | Path, resolution: int = 100
+    ) -> Self:
+        """Save VTS projection data in a cache file.
+
+        Args:
+            filepath: Path to the projection cache file
+            resolution: Number of dense points in each VTS angular direction
+
+        Returns:
+            Self for fluent chaining
+        """
+        projection = self._build_vts_projection(resolution)
+
+        with h5py.File(filepath, "w") as f:
+            f.create_dataset(
+                "projection",
+                data=projection,
+                compression="lzf",
+                shuffle=True,
+            )
+
+            f.attrs["resolution"] = self._resolution
+            f.attrs["mesh"] = self.mesh
+            f.attrs["vts_resolution"] = int(resolution)
+            f.attrs["lmax"] = h5_lmax(self._lmax)
+            f.attrs["angular_grid"] = str(self._angular_grid)
+
+        return self
+
+    def load_projection_cache(
+        self, filepath: str | Path, resolution: int | None = None
+    ) -> NDArray[np.floating]:
+        """Load VTS projection data from a cache file.
+
+        Args:
+            filepath: Path to the projection cache file
+            resolution: Expected number of dense points in each VTS angular direction
+
+        Returns:
+            Cached VTS projection matrix
+
+        Raises:
+            AssertionError On inconsistent attributes between the system and the cache file
+            ValueError On missing or malformed projection data in the file
+        """
+        with h5py.File(filepath, "r") as f:
+            cache_resolution = attr_resolution(f)
+            cache_mesh = attr_mesh(f)
+            cache_vts_resolution = int(attr_any(f, "vts_resolution"))
+            cache_lmax = attr_lmax(f)
+            cache_angular_grid = attr_any(f, "angular_grid")
+
+            assert cache_resolution == self._resolution, (
+                "Inconsistent resolutions between the system and the projection cache file"
+            )
+            assert cache_mesh == self.mesh, (
+                "Inconsistent meshes between the system and the projection cache file"
+            )
+            assert cache_lmax == self._lmax, (
+                "Inconsistent spherical-harmonic cutoffs between the system and the projection cache file"
+            )
+            assert cache_angular_grid == self._angular_grid, (
+                "Inconsistent angular grid type between the system and the projection cache file"
+            )
+            if resolution is not None:
+                assert cache_vts_resolution == resolution, (
+                    "Inconsistent VTS export resolutions between the system and the projection cache file"
+                )
+
+            if "projection" not in f:
+                raise ValueError("Missing cached projection data")
+            projection_obj = f["projection"]
+            if not isinstance(projection_obj, h5py.Dataset):
+                raise ValueError("Cached projection data must be an HDF5 dataset")
+            projection = np.array(projection_obj[()], dtype=float)
+
+        expected_shape = (
+            cache_vts_resolution * cache_vts_resolution,
+            self.mesh[1],
+        )
+        if projection.shape != expected_shape:
+            raise ValueError(
+                f"Expected cached projection shape {expected_shape}, got {projection.shape}"
+            )
+        return cast(NDArray[np.floating], projection)
+
     @staticmethod
     def _spherical_to_cartesian(points: Grid) -> VectorValues:
         """Convert spherical `(r, theta, phi)` points to Cartesian points."""
@@ -967,12 +1075,18 @@ class System:
 
         raise ValueError(f"Unknown angular grid: {self._angular_grid!r}")
 
-    def export_vts(self, path: str | Path, resolution: int = 100) -> Self:
+    def export_vts(
+        self,
+        path: str | Path,
+        resolution: int = 100,
+        projection_cache: str | Path | None = None,
+    ) -> Self:
         """Interpolate the current surface and export it as a VTK StructuredGrid.
 
         Args:
             path: Output .vts file, or directory when no suffix is given
             resolution: Number of dense points in each angular direction
+            projection_cache: Optional path to a cached VTS projection matrix
 
         Returns:
             Self for fluent chaining
@@ -991,12 +1105,11 @@ class System:
             np.column_stack((np.full(len(dense_angles), radius), dense_angles))
         )
 
-        inter = Interpolation(
-            self.resolution,
-            lmax=self.lmax,
-            angular_grid=self._angular_grid,
+        projection = (
+            self._build_vts_projection(resolution)
+            if projection_cache is None
+            else self.load_projection_cache(projection_cache, resolution=resolution)
         )
-        projection = inter._matern.chi(dense_angles).T * np.sqrt(inter._aws)
         displacement = projection @ self.surface()
         points = reference_points + displacement
         magnitude = np.linalg.norm(displacement, axis=1)
