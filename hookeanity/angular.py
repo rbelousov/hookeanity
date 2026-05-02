@@ -263,7 +263,7 @@ class MaternInterpolator:
 
     def bandfilter(self) -> NDArray[np.floating]:
         """Return band-limiting filter."""
-        grain = 4 * np.pi / len(self._nodes)
+        grain = np.mean(self._weights)
         return np.array(
             [
                 (1 + ell * (ell + 1) * grain) ** -(1 + self._smoothness)

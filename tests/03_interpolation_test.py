@@ -19,7 +19,6 @@ def interp(request):
     grid, res, tol = request.param
     return Interpolation(res, angular_grid=grid), tol
 
-
 @pytest.fixture
 def scalar() -> ScalarField:
     """Return a test scalar field."""
