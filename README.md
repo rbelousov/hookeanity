@@ -31,6 +31,20 @@ A complete set of optional dependencies: `tests` (unit tests only), `dev` (tests
 Unit tests are implemented with `pytest` package. If the optional dependencies for tests are installed (`tests` or `dev`), to run the test invoke `pytest` in the command line.
 
 
+## Examples
+
+Examples are shipped as Jupyter notebooks in `examples/` directory.
+
+
+## API Reference
+
+Use `mkdocs build` to generate the documentation or serve it locally with
+
+```bash
+mkdocs serve
+```
+
+
 ## Wolfram paclet `SphericalMatern`
 
 For illustration purposes this package also provides a paclet for Wolfram Mathematica that implements Sobolev-Matérn interpolation with unweighted cardinal functions on a sphere.
