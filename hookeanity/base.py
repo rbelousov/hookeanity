@@ -8,7 +8,6 @@ Attributes:
     Grid (typing.TypeAlias): Grid of point coordinates
     ScalarField (typing.TypeAlias): Scalar field defined over a grid
     VectorField (typing.TypeAlias): Vector field defined over a grid
-    Field (typing.TypeAlias): Scalar or vector field defined over a grid
     ScalarValues (typing.TypeAlias): Scalar values on a mesh
     VectorValues (typing.TypeAlias): Vector values on a mesh
 """
@@ -31,13 +30,12 @@ ScalarValues: TypeAlias = Float[NDArray[np.floating], "points"]  # noqa: F722, F
 VectorValues: TypeAlias = Float[NDArray[np.floating], "points components"]  # noqa: F722, F821
 ScalarField: TypeAlias = Callable[[Point | Grid], Real | ScalarValues]
 VectorField: TypeAlias = Callable[[Point | Grid], Point | VectorValues]
-Field: TypeAlias = ScalarField | VectorField
 
 
 def instance(arg: Any, hint: TypeForm[TypeHint] | Any) -> TypeIs[TypeHint]:
     """Check if a variable is an instance of the given type hint.
 
-    Current implementation is restricted to acceptable type hints by `Type`.
+    Current implementation is restricted to acceptable `Type` hints.
 
     Args:
         arg: variable to check

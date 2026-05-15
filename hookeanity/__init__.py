@@ -1,4 +1,4 @@
-"""Numerical esamples of overdamped elastodynamics."""
+"""Illustration of the overdamped fluctuating elastodynamics model."""
 
 from .base import (
     Real as Real,

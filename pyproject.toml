@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hookeanity"
 version = "0.0.0"
-description = "Hookean elastodynamics"
+description = "Illustration of the overdamped fluctuating elastodynamics model."
 authors = [
     { name = "Roman Belousov", email = "roman.belousov@embl.de" }
 ]
@@ -16,16 +16,13 @@ requires-python = ">=3.13"
 
 dependencies = [
     "numpy", "scipy", "typeguard", "jaxtyping", "h5py", "loguru"
-    # "jax", "optax", "flax", "jaxopt", "plyfile",
-    # "matplotlib", "jupyterlab", "ipywidgets",
-    # "uncertainties"
 ]
 
 [project.optional-dependencies]
 tests = ["pytest"]
-dev = ["pytest", "pydocstringformatter", "ruff", "pyright"]
+dev = ["pytest", "pyright", "pydocstringformatter", "ruff"]
 doc = ["mkdocs", "mkdocstrings[python]", "mkdocs-material"]
-examples = ["matplotlib", "jupyterlab", "ipywidgets", "tqdm", "pillow"]
+examples = ["matplotlib", "jupyterlab", "ipywidgets", "tqdm", "pillow", "pyvista", "trame"]
 
 [tool.setuptools]
 packages = ["hookeanity"]
