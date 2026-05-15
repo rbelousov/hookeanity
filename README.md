@@ -38,7 +38,7 @@ Examples are shipped as Jupyter notebooks in `examples/` directory.
 
 ## API Reference
 
-Use `mkdocs build` to generate the documentation or serve it locally with
+Use `mkdocs build` to generate the API documentation or serve it locally with
 
 ```bash
 mkdocs serve
