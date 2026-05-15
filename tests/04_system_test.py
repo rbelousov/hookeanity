@@ -1,4 +1,8 @@
-"""Tests for `hookeanity.system` module."""
+"""Tests for `hookeanity.system` module.
+
+Attributes:
+    GRID_CONFIGS: Grid specifications for solid angles.
+"""
 
 import pytest
 import numpy as np
@@ -24,7 +28,7 @@ GRID_CONFIGS = [
     ],
 )
 def system(request):
-    """Return System object for different grids, with a random initial state."""
+    """Return `System` object for different grids, with a random initial state."""
     angular_grid, resolution, npoints, lmax = request.param
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
     sys = System(
@@ -391,7 +395,7 @@ def _build_operators_old(
     angular_grid: str,
     lmax: int,
 ):
-    """Implement `_build_operators` according to the old method.
+    """Old unoptimized implementation of `System._build_operators`.
 
     Returns:
         Tuple `(grid, trac, ela, force)`.
@@ -461,7 +465,7 @@ def _build_operators_old(
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_build_operators(angular_grid, resolution, npoints, lmax):
-    """Test that the optimized `_build_operators()` matches the old implementation."""
+    """Test that the optimized `System._build_operators()` matches the old implementation."""
     lam = 2.0
     mu = 2.0
     dt = 1e-2
@@ -501,7 +505,7 @@ def test_build_operators(angular_grid, resolution, npoints, lmax):
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_bulk_reconstruction(angular_grid, resolution, npoints, lmax):
-    """Test the reduced bulk map reproduces the direct solve from Eq."""
+    """Test resoncstruction of the bulk DoFs' displacements from the surface DoFs."""
     sys = System(
         resolution,
         2.0,
@@ -629,7 +633,7 @@ def _surface_points_cartesian(sys: System) -> np.ndarray:
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
-    """Test exporting the current surface as a VTK StructuredGrid."""
+    """Test exporting surface data as a VTK StructuredGrid."""
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
     sys = System(
         resolution,
@@ -668,7 +672,7 @@ def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_export_vts_projection_cache(tmp_path, angular_grid, resolution, npoints, lmax):
-    """Test VTS export can read a cached projection matrix."""
+    """Test that VTS export can read a cached projection matrix."""
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
     sys = System(
         resolution,
@@ -711,7 +715,7 @@ def test_export_vts_projection_cache(tmp_path, angular_grid, resolution, npoints
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
 def test_export_vtp(tmp_path, angular_grid, resolution, npoints, lmax):
-    """Test exporting the native current surface as VTK PolyData."""
+    """Test export of the surface data as VTK PolyData."""
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
     sys = System(
         resolution,

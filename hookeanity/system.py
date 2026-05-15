@@ -1,183 +1,64 @@
 """Spherical body subject to fluctuating forces and point-source surface forces.
 
 Attributes:
-    Seed (typing.TypeAlias): Random-number generator seed
-    Init (typing.TypeAlias): Option for traction operator correction ("no_rigid_motion", "no_translations", "no_rotations")
-    IntegrationMethod (typing.TypeAlias): Method of time integration ("euler", "trotter", "strang")
-    AngularMesh (typing.TypeAlias): Option for solid angle meshing ("fibonacci", "gauss-legendre-fourier")
+    Seed (typing.TypeAlias): Random-number generator seed.
+    Init (typing.TypeAlias): Option for traction operator correction ("no_rigid_motion", "no_translations", "no_rotations").
+    IntegrationMethod (typing.TypeAlias): Method of time integration ("euler", "trotter", "strang").
+    AndularGrid (typing.TypeAlias): Type of the solid-angle grid ("fibonacci", "gauss-legendre-fourier").
 """
 
+from pathlib import Path
 from typing import cast, Any, Literal, Self, TypeAlias
+import h5py
+import json
 import numpy as np
 from scipy.sparse.linalg import expm_multiply, LinearOperator
 from scipy.spatial import ConvexHull
 from numpy.typing import NDArray
 from .interpolation import Interpolation
 from .base import DIM, Real, Grid, VectorValues, instance
-import h5py
-import json
-from pathlib import Path
 from .logging import logger
+from . import h5
 
 Seed: TypeAlias = int | np.integer
-Init: TypeAlias = Literal["no_rigid_motion", "no_translations", "no_rotations"] | None
 IntegrationMethod: TypeAlias = Literal["euler", "trotter", "strang"]
-AngularMesh: TypeAlias = Literal["fibonacci", "gauss-legendre-fourier"]
+AndularGrid: TypeAlias = Literal["fibonacci", "gauss-legendre-fourier"]
+Init: TypeAlias = Literal["no_rigid_motion", "no_translations", "no_rotations"] | None
 
 
-def attr_any(file: h5py.File, key: str) -> Any:
-    """Read an attribute from an HDF5 file handle.
-
-    Args:
-        file: File handle
-        key: Attribute name
-
-    Returns:
-        Attribute value
-    """
-    return cast(Any, file.attrs[key])
-
-
-def attr_float(file: h5py.File, key: str) -> float:
-    """Read floating-point attribute from an HDF5 file handle.
-
-    Args:
-        file: File handle
-        key: Attribute name
-
-    Returns:
-        Attribute value
-    """
-    return float(attr_any(file, key))
-
-
-def attr_resolution(file: h5py.File) -> tuple[int, int]:
-    """Read mesh scheme from an HDF5 file handle attributes.
-
-    Args:
-        file: File handle
-
-    Returns:
-        Resolution specification
-
-    Raises:
-        ValueError When resolution attribute is malformed
-    """
-    key = "resolution"
-    arr = np.asarray(attr_any(file, key))
-    if arr.shape != (2,):
-        raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
-    return (int(arr[0]), int(arr[1]))
-
-
-def attr_mesh(file: h5py.File) -> tuple[int, int]:
-    """Read mesh scheme from an HDF5 file handle attributes.
-
-    Args:
-        file: File handle
-
-    Returns:
-        Mesh specification
-
-    Raises:
-        ValueError When mesh attribute is malformed
-    """
-    key = "mesh"
-    arr = np.asarray(attr_any(file, key))
-    if arr.shape != (2,):
-        raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
-    return (int(arr[0]), int(arr[1]))
-
-
-def attr_f_loc(file: h5py.File) -> tuple[float, float]:
-    """Read point of the external force application from an HDF5 file handle attributes.
-
-    Args:
-        file: File handle
-
-    Returns:std
-        Location of the force application point
-
-    Raises:
-        ValueError When f_loc attribute is malformed
-    """
-    key = "f_loc"
-    arr = np.asarray(attr_any(file, key))
-    if arr.shape != (2,):
-        raise ValueError(f"Expected {key} shape (2,), got {arr.shape}")
-    return (float(arr[0]), float(arr[1]))
-
-
-def attr_lmax(file: h5py.File) -> int | None:
-    """Read spherical-harmonic cutoff from HDF5 attributes."""
-    key = "lmax"
-    if key not in file.attrs:
-        raise ValueError(f"Missing required attribute: {key}")
-    value = int(attr_any(file, key))
-    return None if value < 0 else value
-
-
-def h5_lmax(lmax: int | None) -> int:
-    """Return HDF5-safe representation of an optional lmax."""
-    return -1 if lmax is None else int(lmax)
-
-
-def attr_init(file: h5py.File) -> Init:
-    """Read surface initialization/projection mode from HDF5 attributes."""
-    key = "init"
-    if key not in file.attrs:
-        raise ValueError(f"Missing required attribute: {key}")
-    value = attr_any(file, key)
-    if isinstance(value, (bytes, bytearray, np.bytes_)):
-        value = bytes(value).decode("utf-8")
-    elif value is not None and not isinstance(value, str):
-        raise ValueError(f"Expected {key} to be string or null, got {type(value)}")
-    if value == "none":
-        value = None
-    if value not in {"no_rigid_motion", "no_translations", "no_rotations", None}:
-        raise ValueError(f"Unknown {key} option: {value!r}")
-    return cast(Init, value)
-
-
-def ndfloat_dataset(file: h5py.File, key: str) -> NDArray[np.floating]:
-    """Load numpy array of floating-point numbers from an HDF5 file handle.
-
-    Args:
-        file: File handle
-        key: Dataset key
-
-    Returns:
-        Numpy error loaded from the file
-    """
-    dset = cast(h5py.Dataset, file[key])
-    return np.array(dset[()], dtype=float)
+def cast_init(x: Any) -> Init:
+    """Convert object to `Init`."""
+    return cast(Init, None if x == "none" else str(x))
 
 
 class System:
     """Simulated system.
 
     Attributes:
-        _gamma (hookeanity.Real): Effective dissipative coefficient
-        _lam (hookeanity.Real): Lamé lambda coefficient
-        _mu (hookeanity.Real): Lamé mu coefficient
-        _ext (hookeanity.Real): Magnitude of the external point force
-        _loc (tuple[hookeanity.Real, hookeanity.Real]): Solid angle specifying the location of the external point force
-        _lmax (int | None): Maximum order of the spherical harmonic expansion
-        _kbt (hookeanity.Real): Temperature
-        _state (hookeanity.VectorValues): Displacements of the grid points
-        _grid (kookeanity.Grid): Mesh grid
-        _inter (hookeanity.interpolation.Interpolation): Interpolation utilities
-        _rng (numpy.random.Generator): Numpy random-number generator
-        _trac (numpy.ndarray): Matrix operator of the elastic traction force
-        _trac_oper (numpy.ndarray): Matrix traction operator for Trotter or Strang methods of integration
-        _trace (hookeanity.Real)" Trace of the matrix traction operator for Trotter or Strang methods of integration
-        _ela (numpy.ndarray): Matrix operator of the divergence of the elastic stress
-        _force (numpy.ndarray): External point force
-        _std (numpy.ndarray): Intensity of the thermal fluctuations
-        _method (str): Integration method ("euler", "trotter", "strang")
-        _dt (hookeanity.Real): Integration time step
-        _tf (hookeanity.Real): Time step normalized by the dissipative coefficient
-        verbose (bool): Trigger of logging output
+        _resolution (tuple[int, int]): Number of radial points and angular resolution..
+        _angular_grid (hookeanity.system.AndularGrid): Type of grid in the angular component ("fibonacci, gauss-legendre-fourier").
+        _gamma (float): Dissipative coefficient.
+        _lam (float): Lamé lambda coefficient.
+        _mu (float): Lamé mu coefficient.
+        _dt (float): Integration time step
+        _ext (float): Magnitude of the external point force.
+        _loc (tuple[float, float]): Solid angle specifying the location of the external point force.
+        _lmax (int | None): Order of the spherical-harmonic expansion of the Sobolev-Matérn kernels.
+        _kbt (float): Temperature.
+        _rng (numpy.random.Generator): Numpy random-number generator.
+        verbose (bool): Trigger of logging output.
+        _state (hookeanity.VectorValues): Displacements of the reference points.
+        _tf (float): Time step normalized by the dissipative coefficient.
+        _method (hookeanity.system.IntegrationMethod): Time-integration method.
+        _trac_oper (scipy.sparse.linalg.LinearOperator): Matrix traction operator for Trotter or Strang methods of time integration.
+        _trace (hookeanity.Real): Trace of the matrix traction operator for Trotter or Strang methods of integration.
+        _std (numpy.ndarray): Intensity of the thermal fluctuations.
+        _mesh (tuple[int, int]): Number of points in the radial and solid-angle components.
+        _grid (hookeanity.Grid): 3D mesh grid.
+        _trac (numpy.ndarray): Matrix operator of the elastic traction force.
+        _ela (numpy.ndarray): Matrix operator of the divergence of the elastic stress.
+        _force (numpy.ndarray): Components of external point force over surface degrees of freedom.
+        _trac_red (numpy.ndarray): Matrix traction operator reduced to the surface degrees of freedom.
     """
 
     def __init__(
@@ -192,7 +73,7 @@ class System:
         gamma: Real = 1.0,
         state: VectorValues | None = None,
         method: IntegrationMethod = "euler",
-        angular_grid: AngularMesh = "fibonacci",
+        angular_grid: AndularGrid = "fibonacci",
         rng: np.random.Generator | Seed | None = None,
         verbose: bool = False,
         cache: str | Path | None = None,
@@ -202,45 +83,45 @@ class System:
         """Initialize the simulation system.
 
         Args:
-            resolution: Number of radial points and angular grid resolution
-            lam: Lamé's first parameter
-            mu: Lamé's second parameter (shear modulus)
-            dt: Integration time step
-            f_ext: Magnitude of the external force defaults to zero
-            f_loc: Solid angle specifying the location of the external point force
-            kbt: Effective temperature in units of energy defaults to one
-            gamma: Effective dissipative coefficient
-            state: Current state of the system defaults to zeros
-            method: Integration method ("euler", "trotter", "strang")
-            angular_grid: Type of grid in the angular component ("fibonacci, gauss-legendre-fourier")
-            rng: Optional state of the random number generator or seed
-            verbose: Log the initialization
-            cache: Path to the cached numerical data
-            lmax: Maximum order of the spherical harmonic expansion
-            init: Surface projection mode for reduced traction
+            resolution: Number of radial points and angular grid resolution.
+            lam: Lamé's first parameter.
+            mu: Lamé's second parameter (shear modulus).
+            dt: Integration time step.
+            f_ext: Magnitude of the external force defaults to zero.
+            f_loc: Solid angle specifying the location of the external point force.
+            kbt: Effective temperature in units of energy defaults to one.
+            gamma: Effective dissipative coefficient.
+            state: Current state of the system defaults to zeros.
+            method: Integration method ("euler", "trotter", "strang").
+            angular_grid: Type of grid in the angular component ("fibonacci, gauss-legendre-fourier").
+            rng: Optional state of the random number generator or seed.
+            verbose: Log the initialization.
+            cache: Path to the cached numerical data.
+            lmax: Order of the spherical-harmonic expansion of the Sobolev-Matérn kernels.
+            init: Surface projection mode for reduced traction.
 
         Raises:
-            ValueError: On unknown integration method
-            AssertionError: When traction operator has a positive eigenvalue
+            ValueError: On unknown integration method.
+            AssertionError: When traction operator has a positive eigenvalue.
         """
         if method not in {"euler", "strang", "trotter"}:
             raise ValueError(f"Unknown integration method: {method!r}.")
         if angular_grid not in {"fibonacci", "gauss-legendre-fourier"}:
             raise ValueError(f"Unknown angular grid: {angular_grid!r}.")
-
-        self._resolution = resolution
-        self._angular_grid = angular_grid
-        self._gamma = gamma
-        self._lam = lam
-        self._mu = mu
-        self._dt = dt
-        self._ext = f_ext
-        self._loc = f_loc
-        self._lmax = None if lmax is None else int(lmax)
         if init not in {"no_rigid_motion", "no_translations", "no_rotations", None}:
             raise ValueError(f"Unknown init option: {init!r}.")
+
+        self._resolution = (int(resolution[0]), int(resolution[1]))
+        self._angular_grid = angular_grid
+        self._gamma = float(gamma)
+        self._lam = float(lam)
+        self._mu = float(mu)
+        self._dt = float(dt)
+        self._ext = float(f_ext)
+        self._loc = (float(f_loc[0]), float(f_loc[1]))
+        self._lmax = None if lmax is None else int(lmax)
         self._init: Init = init
-        self._kbt = kbt
+        self._kbt = float(kbt)
         self._method = method
         self._rng = (
             rng
@@ -292,8 +173,8 @@ class System:
         inter = Interpolation(
             self._resolution, lmax=self._lmax, angular_grid=self._angular_grid
         )
-        self._grid = inter.grid()
         self._mesh = inter.mesh
+        self._grid = inter.grid()
 
         ndof = self.ndof
         nsurf_pts = self.mesh[1]
@@ -473,7 +354,7 @@ class System:
             logger.info(message)
 
     def normals(self) -> VectorValues:
-        """Return inward surface area normals dS."""
+        """Return inward surface area normals."""
         angles = self._grid[-self.mesh[-1] :, 1:]
         st = np.sin(angles[:, 0])
         st2 = st**2
@@ -494,21 +375,21 @@ class System:
 
     @property
     def lmax(self) -> int | None:
-        """Return maximum spherical-harmonic expansion order."""
+        """Return order of spherical-harmonic expansion of the Sobolev-Matérn kernels."""
         return self._lmax
 
     @property
     def npoints(self) -> int:
-        """Return number of the grid points."""
+        """Return total number of the grid points."""
         return np.prod(self.mesh).item()
 
     @property
     def ndof(self) -> int:
-        """Return number of degrees of freedm."""
+        """Return total number of degrees of freedom."""
         return DIM * self.npoints
 
     def grid(self) -> Grid:
-        """Return generator of quadrature points."""
+        """Return underlying mesh grid."""
         return self._grid
 
     def state(self) -> VectorValues:
@@ -527,7 +408,7 @@ class System:
         """Integration step.
 
         Returns:
-            Updated system after one integration step
+            Updated system after one integration step.
         """
         if self._method == "euler":
             self._state = self._euler_step()
@@ -539,13 +420,13 @@ class System:
         return self
 
     def _solve_bulk(self, vec: np.ndarray) -> np.ndarray:
-        """Solve the bulk equilibrium equations for the given surface state.
+        """Compute displacements of the bulk degrees of freedom from the current surface degrees of freedom.
 
         Args:
             vec: Flat vector of displacements for all the degrees of freedom
 
         Returns:
-            Updated degrees of freedom
+            All updated degrees of freedom.
         """
         nsurf = self.nsurf
         bulk = slice(None, -nsurf)  # bulk selector
@@ -572,10 +453,10 @@ class System:
         """Construct the traction operator for the exponential integrators.
 
         Args:
-            tf: Time factor for the operator
+            tf: Time factor for the operator.
 
         Returns:
-            The traction operator and its trace
+            The traction operator and its trace.
         """
         nsurf = self.nsurf
         trac_exp = self._trac_red * tf
@@ -602,10 +483,10 @@ class System:
         ), trace
 
     def _trotter_step(self) -> VectorValues:
-        """Perform one Trotter splitting integration step.
+        """Perform one Trotter integration step.
 
         Returns:
-            Updated state vector after one Trotter splitting step
+            Updated state vector after one Trotter splitting step.
         """
         surf = self._surface_state()
         surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
@@ -614,10 +495,10 @@ class System:
         return self._reconstruct_state(surf)
 
     def _strang_step(self) -> VectorValues:
-        """Perform one Strang splitting integration step.
+        """Perform one Strang integration step.
 
         Returns:
-            Updated state vector after one Strang splitting step
+            Updated state vector after one Strang splitting step.
         """
         surf = self._surface_state()
         surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
@@ -627,16 +508,16 @@ class System:
         return self._reconstruct_state(surf)
 
     def save(self, filepath: str | Path) -> Self:
-        """Save system data into an HDF5 file.
+        """Save a checkpoint into an HDF5 file.
 
         Args:
-            filepath: Path to the file to save data into
+            filepath: Path to the file to save data into.
 
         Raises:
-            TypeError: On missing/invalid checkpoint fields or unknown RNG class
+            TypeError: On missing/invalid checkpoint fields or unknown RNG class.
 
         Returns:
-            Self for fluent chaining
+            Self for fluent chaining.
         """
 
         def json_default(obj):
@@ -661,7 +542,7 @@ class System:
             f.attrs["dt"] = float(self._dt)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
-            f.attrs["lmax"] = h5_lmax(self._lmax)
+            f.attrs["lmax"] = h5.optional_nnint(self._lmax)
             f.attrs["init"] = "none" if self._init is None else str(self._init)
             f.attrs["kT"] = float(self._kbt)
             f.attrs["method"] = str(self._method)
@@ -680,18 +561,18 @@ class System:
         verbose: bool = False,
         cache: str | Path | None = None,
     ) -> Self:
-        """Load system data from an HDF5 file.
+        """Load checkpoint data from an HDF5 file.
 
         Args:
-            filepath: Path to the file to load the data from
-            verbose: Log the initialization
-            cache: Path to the cached mesh-associated data
-
-        Raises:
-            ValueError: On missing/invalid checkpoint fields or unknown RNG class
+            filepath: Path to the file to load the data from.
+            verbose: Log the initialization.
+            cache: Path to the cached mesh-associated data.
 
         Returns:
-            Loaded instance of the system
+            Loaded instance of the system.
+
+        Raises:
+            ValueError: On missing/invalid checkpoint fields or unknown RNG class.
         """
 
         def decode_text(x: Any) -> str:
@@ -701,33 +582,35 @@ class System:
                 return x
             raise ValueError(f"Expected text attribute, got {type(x).__name__}")
 
-        def restore_numpy(obj: Any) -> Any:
+        def restore_rng(obj: Any) -> Any:
             if isinstance(obj, list):
                 return np.asarray(obj)
             if isinstance(obj, dict):
-                return {k: restore_numpy(v) for k, v in obj.items()}
+                return {k: restore_rng(v) for k, v in obj.items()}
             return obj
 
         with h5py.File(filepath, "r") as f:
-            resolution = attr_resolution(f)
-            gamma = attr_float(f, "gamma")
-            lam = attr_float(f, "lambda")
-            mu = attr_float(f, "mu")
-            dt = attr_float(f, "dt")
-            f_ext = attr_float(f, "f_ext")
-            f_loc = attr_f_loc(f)
-            lmax = attr_lmax(f)
-            init = attr_init(f)
-            kbt = attr_float(f, "kT")
-            method = cast(IntegrationMethod, decode_text(attr_any(f, "method")))
-            angular_grid = cast(AngularMesh, decode_text(attr_any(f, "angular_grid")))
+            resolution = h5.attr_int_pair(f, "resolution")
+            gamma = h5.attr_float(f, "gamma")
+            lam = h5.attr_int(f, "lambda")
+            mu = h5.attr_float(f, "mu")
+            dt = h5.attr_float(f, "dt")
+            f_ext = h5.attr_float(f, "f_ext")
+            f_loc = h5.attr_float_pair(f, "f_loc")
+            lmax = h5.attr_int(f, "lmax")
+            init = cast_init(h5.attr_any(f, "init"))
+            kbt = h5.attr_float(f, "kT")
+            method = cast(IntegrationMethod, decode_text(h5.attr_any(f, "method")))
+            angular_grid = cast(
+                AndularGrid, decode_text(h5.attr_any(f, "angular_grid"))
+            )
 
             dset = cast(h5py.Dataset, f["state"])
             state = cast(NDArray[np.floating], dset[()])
 
-            bitgen_name = decode_text(attr_any(f, "rng_bit_generator"))
-            state_json = decode_text(attr_any(f, "rng_state_json"))
-            rng_state = restore_numpy(json.loads(state_json))
+            bitgen_name = decode_text(h5.attr_any(f, "rng_bit_generator"))
+            state_json = decode_text(h5.attr_any(f, "rng_state_json"))
+            rng_state = restore_rng(json.loads(state_json))
 
             bitgen_cls = getattr(np.random, bitgen_name, None)
             if bitgen_cls is None:
@@ -739,7 +622,6 @@ class System:
 
             return cls(
                 resolution=resolution,
-                # mesh=mesh,
                 lam=lam,
                 mu=mu,
                 dt=dt,
@@ -761,10 +643,10 @@ class System:
         """Save operator data in a cache file.
 
         Args:
-            filepath: Path to the cache file
+            filepath: Path to the cache file.
 
         Returns:
-            Self for fluent chaining
+            Self for fluent chaining.
         """
         with h5py.File(filepath, "w") as f:
             # Datasets
@@ -798,7 +680,7 @@ class System:
             f.attrs["dt"] = float(self._dt)
             f.attrs["f_ext"] = float(self._ext)
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
-            f.attrs["lmax"] = h5_lmax(self._lmax)
+            f.attrs["lmax"] = h5.optional_nnint(self._lmax)
             f.attrs["angular_grid"] = str(self._angular_grid)
             f.attrs["init"] = "none" if self._init is None else str(self._init)
 
@@ -808,25 +690,25 @@ class System:
         """Load operator data from a cache file.
 
         Args:
-            filepath: Path to the cache file
+            filepath: Path to the cache file.
 
         Returns:
-            Self for fluent chaining
+            Self for fluent chaining.
 
         Raises:
-            AssertionError On inconsistent attributes between the system and the cache file
-            ValueError On missing cache data in the file
+            AssertionError: On inconsistent attributes between the system and the cache file.
+            ValueError: On missing cache data in the file.
         """
         with h5py.File(filepath, "r") as f:
-            resolution = attr_resolution(f)
-            lam = attr_float(f, "lambda")
-            mu = attr_float(f, "mu")
-            dt = attr_float(f, "dt")
-            f_ext = attr_float(f, "f_ext")
-            f_loc = attr_f_loc(f)
-            lmax = attr_lmax(f)
-            angular_grid = attr_any(f, "angular_grid")
-            init = attr_init(f)
+            resolution = h5.attr_int_pair(f, "resolution")
+            lam = h5.attr_float(f, "lambda")
+            mu = h5.attr_float(f, "mu")
+            dt = h5.attr_float(f, "dt")
+            f_ext = h5.attr_float(f, "f_ext")
+            f_loc = h5.attr_float_pair(f, "f_loc")
+            lmax = h5.attr_int(f, "lmax")
+            angular_grid = h5.attr_any(f, "angular_grid")
+            init = cast_init(h5.attr_any(f, "init"))
 
             assert resolution == self._resolution, (
                 "Inconsistent resolutions between the system and the cache file"
@@ -857,13 +739,13 @@ class System:
             )
 
             # Datasets
-            self._mesh = attr_mesh(f)
-            self._grid = ndfloat_dataset(f, "grid")
-            self._trac = ndfloat_dataset(f, "trac")
-            self._ela = ndfloat_dataset(f, "ela")
-            self._bulk_from_surf = ndfloat_dataset(f, "bulk_from_surf")
-            self._trac_red = ndfloat_dataset(f, "trac_red")
-            force = ndfloat_dataset(f, "fext")
+            self._mesh = h5.attr_int_pair(f, "mesh")
+            self._grid = h5.dataset_ndfloat(f, "grid")
+            self._trac = h5.dataset_ndfloat(f, "trac")
+            self._ela = h5.dataset_ndfloat(f, "ela")
+            self._bulk_from_surf = h5.dataset_ndfloat(f, "bulk_from_surf")
+            self._trac_red = h5.dataset_ndfloat(f, "trac_red")
+            force = h5.dataset_ndfloat(f, "fext")
             if force.shape != (self.nsurf,):
                 raise ValueError(
                     f"Expected cached force shape {(self.nsurf,)}, got {force.shape}"
@@ -873,7 +755,17 @@ class System:
         return self
 
     def _build_vts_projection(self, resolution: int) -> NDArray[np.floating]:
-        """Return the surface-to-VTS projection matrix."""
+        """Return the surface-to-VTS projection matrix.
+
+        Args:
+            resolution (int): VTS resolution.
+
+        Return:
+            Constructed projection matrix.
+
+        Raises:
+            ValueError: One invalid resolution value.
+        """
         if resolution < 2:
             raise ValueError("VTS export resolution must be at least 2")
 
@@ -898,11 +790,11 @@ class System:
         """Save VTS projection data in a cache file.
 
         Args:
-            filepath: Path to the projection cache file
-            resolution: Number of dense points in each VTS angular direction
+            filepath: Path to the projection cache file.
+            resolution: Number of dense points in each VTS angular direction.
 
         Returns:
-            Self for fluent chaining
+            Self for fluent chaining.
         """
         projection = self._build_vts_projection(resolution)
 
@@ -917,7 +809,7 @@ class System:
             f.attrs["resolution"] = self._resolution
             f.attrs["mesh"] = self.mesh
             f.attrs["vts_resolution"] = int(resolution)
-            f.attrs["lmax"] = h5_lmax(self._lmax)
+            f.attrs["lmax"] = h5.optional_nnint(self._lmax)
             f.attrs["angular_grid"] = str(self._angular_grid)
 
         return self
@@ -928,22 +820,22 @@ class System:
         """Load VTS projection data from a cache file.
 
         Args:
-            filepath: Path to the projection cache file
-            resolution: Expected number of dense points in each VTS angular direction
+            filepath: Path to the projection cache file.
+            resolution: Expected number of dense points in each VTS angular direction.
 
         Returns:
-            Cached VTS projection matrix
+            Cached VTS projection matrix.
 
         Raises:
-            AssertionError On inconsistent attributes between the system and the cache file
-            ValueError On missing or malformed projection data in the file
+            AssertionError: On inconsistent attributes between the system and the cache file.
+            ValueError: On missing or malformed projection data in the file.
         """
         with h5py.File(filepath, "r") as f:
-            cache_resolution = attr_resolution(f)
-            cache_mesh = attr_mesh(f)
-            cache_vts_resolution = int(attr_any(f, "vts_resolution"))
-            cache_lmax = attr_lmax(f)
-            cache_angular_grid = attr_any(f, "angular_grid")
+            cache_resolution = h5.attr_int_pair(f, "resolution")
+            cache_mesh = h5.attr_int_pair(f, "mesh")
+            cache_vts_resolution = h5.attr_int(f, "vts_resolution")
+            cache_lmax = h5.attr_int(f, "lmax")
+            cache_angular_grid = h5.attr_any(f, "angular_grid")
 
             assert cache_resolution == self._resolution, (
                 "Inconsistent resolutions between the system and the projection cache file"
@@ -981,7 +873,14 @@ class System:
 
     @staticmethod
     def _spherical_to_cartesian(points: Grid) -> VectorValues:
-        """Convert spherical `(r, theta, phi)` points to Cartesian points."""
+        """Convert spherical `(r, theta, phi)` points to Cartesian points.
+
+        Args:
+            points: Spherical coordinates of 3D points.
+
+        Returns:
+            Cartesian coordinates of the 3D points.
+        """
         radius, theta, phi = np.asarray(points).T
         return np.column_stack(
             (
@@ -993,7 +892,18 @@ class System:
 
     @staticmethod
     def _export_path(path: str | Path, suffix: str) -> Path:
-        """Return output path for a VTK export."""
+        """Create path and check the suffix of VTK file to export.
+
+        Args:
+            path: Name of the file to export.
+            suffix: Suffix (".vts" or ".vtp") determines the exported format.
+
+        Returns:
+            Path with the proper suffix.
+
+        Raises:
+            ValueError: On inconsistent suffix.
+        """
         output = Path(path)
         if output.suffix:
             if output.suffix != suffix:
@@ -1007,7 +917,14 @@ class System:
 
     @staticmethod
     def _vtk_data(values: np.ndarray) -> str:
-        """Format array values for an ASCII VTK XML data array."""
+        """Format array values for an ASCII VTK XML data array.
+
+        Args:
+            values: Array to format.
+
+        Returns:
+            Formatted array.
+        """
         flat = np.asarray(values).ravel()
         if np.issubdtype(flat.dtype, np.integer):
             return " ".join(str(int(value)) for value in flat)
@@ -1017,7 +934,6 @@ class System:
     def _vtk_data_array(
         name: str | None,
         values: np.ndarray,
-        *,
         number_of_components: int | None = None,
         dtype: str = "Float64",
     ) -> str:
@@ -1084,12 +1000,12 @@ class System:
         """Interpolate the current surface and export it as a VTK StructuredGrid.
 
         Args:
-            path: Output .vts file, or directory when no suffix is given
-            resolution: Number of dense points in each angular direction
-            projection_cache: Optional path to a cached VTS projection matrix
+            path: Output file name.
+            resolution: Number of dense points in each angular direction.
+            projection_cache: Optional path to a cached VTS projection matrix.
 
         Returns:
-            Self for fluent chaining
+            Self for fluent chaining.
         """
         if resolution < 2:
             raise ValueError("VTS export resolution must be at least 2")
@@ -1143,10 +1059,10 @@ class System:
         """Export the native current surface as VTK PolyData.
 
         Args:
-            path: Output .vtp file, or directory when no suffix is given
+            path: Output file.
 
         Returns:
-            Self for fluent chaining
+            Self for fluent chaining.
         """
         output = self._export_path(path, ".vtp")
         displacement = self.surface()

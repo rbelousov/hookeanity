@@ -1,15 +1,15 @@
 """Basic types.
 
 Attributes:
-    DIM (int): Number of spatial dimensions
-    TypeHint (typing.TypeVar): Type variable for hints
-    Real (typing.TypeAlias): Native python or numpy floating-point number
-    Point (typing.TypeAlias): Point coordinates in 3D
-    Grid (typing.TypeAlias): Grid of 3D point coordinates
-    ScalarField (typing.TypeAlias): Scalar field defined over a grid
-    VectorField (typing.TypeAlias): Vector field defined over a grid
-    ScalarValues (typing.TypeAlias): Scalar values on a mesh
-    VectorValues (typing.TypeAlias): Vector values on a mesh
+    DIM (int): Number of spatial dimensions.
+    TypeHint (typing.TypeVar): Type variable for hints.
+    Real (typing.TypeAlias): Native python or numpy floating-point number.
+    Point (typing.TypeAlias): Point coordinates in 3D.
+    Grid (typing.TypeAlias): Grid of 3D point coordinates.
+    ScalarField (typing.TypeAlias): Scalar field defined over a grid.
+    VectorField (typing.TypeAlias): Vector field defined over a grid.
+    ScalarValues (typing.TypeAlias): Scalar values on a mesh.
+    VectorValues (typing.TypeAlias): Vector values on a mesh.
 """
 
 from typing import Any, TypeAlias, TypeVar
