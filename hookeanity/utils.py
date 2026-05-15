@@ -9,6 +9,7 @@ def young_poisson_to_lame(modulus: Real, ratio: Real) -> tuple[float, float]:
     Args:
         modulus: Young modulus.
         ratio: Poisson ratio.
+
     Returns:
         Lamé coefficients lambda and mu.
     """
@@ -23,7 +24,8 @@ def lame_to_young_poisson(lam: Real, mu: Real) -> tuple[float, float]:
     Args:
         mu: Shear modulus.
         lam: First Lamé coefficient.
-    Returns
+
+    Returns:
         Young modulus and Poisson ratio.
     """
     modulus = mu * (3 * lam + 2 * mu) / (lam + mu)

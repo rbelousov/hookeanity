@@ -1,4 +1,4 @@
-"""Transformed Jacobi polynomials for the radial component."""
+"""Numerical methods for functions of the radial component in spherical coordinates."""
 
 from typing import cast
 import numpy as np
@@ -10,20 +10,20 @@ from .base import Real, instance
 def jacobi_radau_quadrature(
     num: int,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Gauss–Radau quadrature with the fixed node at x = 1 for (0,2) Jacobi polynomials.
+    """Gauss–Jacobi-Radau quadrature with the fixed node at x = 1 for (0,2) Jacobi polynomials.
 
-    The quadarature is defined on the interval [-1, 1] for the weighting function of of the (0,2) Jacobi polynomials.
+    The quadarature is defined on the interval [-1, 1] with the weighting function of the (0,2) Jacobi polynomials.
 
     Args:
-        num: Number of points
+        num: Number of quadtrature points.
 
     Returns:
-        Nodes and weights of the quadrature
+        Quadrature nodes and weights of the quadrature.
 
     Raises:
-        AssertionError: One `num < 1`
+        AssertionError: On `num < 1`.
     """
-    assert num >= 1, f"Nonpositive number of points ({num})"
+    assert num >= 1, f"nonpositive number of points ({num})"
 
     a, b = 0.0, 2.0
     x0 = 1.0
@@ -84,19 +84,18 @@ def jacobi_radau_quadrature(
 class RadialPolynomial:
     """Jacobi (0,2)-polynomial shifted and orthonormalized on the interval [0, 1].
 
-    These polynomials are suitable for numerical integration with respect to the radial component of the spherical
-    coordinates.
+    These polynomials are suitable for numerical integration and differentiation with respect to the radial component of the spherical coordinates.
 
     Attributes:
-        _order (int): Polynomial order
-        _prefactor (numpy.floating): Normalization prefactor
+        _order (int): Polynomial order.
+        _prefactor (numpy.floating): Normalization prefactor.
     """
 
     def __init__(self, order: int):
         """Initialize radial polynomial of a given order.
 
         Args:
-            order (int): Polynomial order
+            order (int): Polynomial order.
         """
         self._order = order
         self._prefactor = np.sqrt(2 * order + 3)
@@ -107,11 +106,11 @@ class RadialPolynomial:
         """Evaluate the radial polynomial.
 
         Args:
-            r: Grid or radial values within the interval [0, 1]
-            derivative: When `True`, evaluate the derivative of the radial polynomial
+            r: Values of the radial component within the interval [0, 1].
+            derivative: When `True`, evaluate the derivative of the radial polynomial.
 
         Returns:
-            Values of the radial polynomial or its derivative
+            Values of the radial polynomial or its derivative.
         """
         r_is_real = instance(r, Real)
         if self._order == 0:
@@ -132,16 +131,16 @@ class RadialPolynomial:
 
     @staticmethod
     def quadrature(
-        spectral_order: int,
+        num: int,
     ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         """Return radial quadrature.
 
         Args:
-            spectral_order: Order of spectral accuracy
+            num: Number of points.
 
         Returns:
-            Grid of quadrature nodes and weights
+            Quadrature nodes and weights.
         """
-        nodes, weights = jacobi_radau_quadrature(spectral_order + 1)
+        nodes, weights = jacobi_radau_quadrature(num)
 
         return (nodes + 1) / 2, weights / 8

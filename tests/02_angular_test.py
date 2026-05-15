@@ -6,15 +6,15 @@ import numpy as np
 from scipy.special import sph_legendre_p, legendre
 from hookeanity.base import Real, instance
 from hookeanity.angular import (
+    SphericalHarmonic,
+    MaternInterpolator,
     fibonacci_points,
     fibonacci_weight,
     gauss_legendre_fourier_points,
     gauss_legendre_fourier_weights,
     fourier,
-    SphericalHarmonic,
     geodesic_cos,
 )
-from hookeanity.angular import MaternInterpolator
 
 
 def test_fourier():
@@ -167,7 +167,7 @@ def test_harmonics_derivatives(simple_grid):
 
 
 def test_fibonacci():
-    """Test fibanacci quadrature."""
+    """Test Fibanacci quadrature."""
     n = 100
     nodes = fibonacci_points(n)
     weight = fibonacci_weight(n)
@@ -230,7 +230,7 @@ def test_legendre(simple_grid):
 
 
 def test_matern_interpolation():
-    """Test `MaternInterpolator`."""
+    """Test Sobolev-Matérn interpolation."""
     angles = fibonacci_points(100)
     weights = np.full(len(angles), fibonacci_weight(len(angles)))
     inter = MaternInterpolator(angles, weights=weights)

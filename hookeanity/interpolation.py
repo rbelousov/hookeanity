@@ -1,4 +1,4 @@
-"""Numerical methods for spherical coordinates over a unit ball."""
+"""Inerpolation of functions in spherical coordinates over a unit ball."""
 
 from itertools import product
 from collections.abc import Iterator
@@ -47,7 +47,7 @@ class Interpolation:
             lmax: Maximum order of the spherical harmonic expansion
             angular_grid: Type of discretization in the angular component
         """
-        self._radii, self._rws = RadialPolynomial.quadrature(resolution[0] - 1)
+        self._radii, self._rws = RadialPolynomial.quadrature(resolution[0])
 
         self._resolution = resolution
         if angular_grid == "fibonacci":

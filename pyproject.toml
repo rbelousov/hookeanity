@@ -31,16 +31,9 @@ packages = ["hookeanity"]
 testpaths = ["tests"]
 
 [tool.pydocstringformatter]
+max-line-length = 88
 write = true
 
 [tool.ruff]
 src = ["hookeanity", "tests"]
 include = ["**/*.py", "**/*.ipynb"]
-
-[tool.ruff.lint]
-extend-select = ["D"]
-ignore = [
-  "D203",  # no blank line before class docstring (keep D211)
-  "D213",  # summary on first line (keep D212)
-#   "D400", "D413", "D415", # Summary without period
-]

@@ -24,6 +24,7 @@ from numpy.typing import NDArray
 DIM = 3
 TypeHint = TypeVar("TypeHint")
 Real: TypeAlias = float | np.floating
+
 Point: TypeAlias = Float[NDArray[np.floating], "coordinates"]  # noqa: F722, F821
 Grid: TypeAlias = Float[NDArray[np.floating], "points coordinates"]  # noqa: F722, F821
 ScalarValues: TypeAlias = Float[NDArray[np.floating], "points"]  # noqa: F722, F821

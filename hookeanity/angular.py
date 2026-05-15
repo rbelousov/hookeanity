@@ -1,4 +1,4 @@
-"""Numerical tools for solid angles in spherical coordinates."""
+"""Numerical methods for functions of the solid angle in spherical coordinates."""
 
 import numpy as np
 from collections.abc import Iterator
@@ -11,10 +11,10 @@ def fibonacci_points(n: int) -> NDArray[np.floating]:
     """Distribute Fibonacci golden-angle points on a unit sphere avoiding poles.
 
     Args:
-        n: Number of points
+        n: Number of points.
 
     Returns:
-        A grid of solid angles that covers the sphere with nearly uniform-distributed points
+        A grid of solid angles that covers the sphere with nearly uniform-distributed points.
     """
     k = np.arange(n)
 
@@ -32,22 +32,27 @@ def fibonacci_points(n: int) -> NDArray[np.floating]:
 
 
 def fibonacci_weight(n: int) -> float:
-    """Return weights for the given number of Fibonacci points."""
+    """Return the weight factor of a given number of Fibonacci points.
+
+    All Fibonacci points have equal weight (see `fibonacci_points()`).
+
+    Returns:
+        Weight of the fibonacci points.
+    """
     return 4 * np.pi / n
 
 
 def gauss_legendre_fourier_points(n_latitude: int) -> NDArray[np.floating]:
-    r"""Return tensor-product Gauss-Legendre/Fourier points on a unit sphere.
+    """Return tensor-product Gauss-Legendre-Fourier points on a unit sphere.
 
-    The grid uses Gauss-Legendre nodes in :math:`\mu=\cos(\theta)` and equally
-    spaced Fourier nodes in longitude :math:`\phi`.
+    The grid uses Gauss-Legendre nodes in `mu = cos(theta)` and equally
+    spaced Fourier nodes in longitude `phi`.
 
     Args:
-        n_latitude: Number of Gauss-Legendre nodes in latitude
+        n_latitude: Number of Gauss-Legendre lattitude nodes.
 
     Returns:
-        Array of shape ``(n_latitude * n_longitude, 2)`` containing
-        ``(theta, phi)`` points
+        Grid of Gauss-Legendre-Fourier points.
     """
     n_longitude = 2 * n_latitude
     mu, _ = roots_legendre(n_latitude)
@@ -60,11 +65,10 @@ def gauss_legendre_fourier_weights(n_latitude: int) -> NDArray[np.floating]:
     """Return quadrature weights for a Gauss-Legendre/Fourier sphere grid.
 
     Args:
-        n_latitude: Number of Gauss-Legendre nodes in latitude
+        n_latitude: Number of Gauss-Legendre nodes in latitude.
 
     Returns:
-        One-dimensional array of weights aligned with
-        :func:`gauss_legendre_fourier_points`
+        One-dimensional array of weights aligned with `gauss_legendre_fourier_points`.
     """
     n_longitude = 2 * n_latitude
     _, lat_weights = roots_legendre(n_latitude)
@@ -78,12 +82,12 @@ def fourier(
     """Evaluate real Fourier function of a given order.
 
     Args:
-        order: Order of the function
-        phi: Values of the argument
-        derivative: When `True`, evaluate the derivative of the Fourier function
+        order: Order of the function.
+        phi: Values of the argument.
+        derivative: When `True`, evaluate the derivative of the Fourier function.
 
     Returns:
-        Value of the Fourier function or its derivative
+        Value of the Fourier function or its derivative.
     """
     phi_is_real = instance(phi, Real)
     if order == 0:
@@ -112,17 +116,17 @@ def fourier(
 
 
 class SphericalHarmonic:
-    """Real-valued spherical harmonics.
+    """Real-valued orthonormal spherical harmonics.
 
     Attributes:
-        _order (tuple[int, int]): Order (l, m) of the harmonics
+        _order (tuple[int, int]): Order (l, m) of the harmonics.
     """
 
     def __init__(self, order: tuple[int, int]):
         """Initialize a spherical harmonic of the given order.
 
         Args:
-            order: Order (l, m) of the harmonic
+            order: Order (l, m) of the harmonic.
         """
         assert abs(order[1]) <= order[0], (
             f"Polar order ({order[1]}) exceeds the azimuthatl order ({order[0]})"
@@ -133,10 +137,10 @@ class SphericalHarmonic:
         """Return values of the spherical harmonic at the given solid angles.
 
         Args:
-            angles: Solid angles to evaluate the spherical harmonic at
+            angles: Solid angles to evaluate the spherical harmonic at.
 
         Returns:
-            Values of the function
+            Values of the function.
         """
         angles = np.asarray(angles)
         result = sph_legendre_p(
@@ -149,10 +153,10 @@ class SphericalHarmonic:
         """Return the derivative with respect to the polar angle.
 
         Args:
-            angles: Solid angles to evaluate the derivative at
+            angles: Solid angles to evaluate the derivative at.
 
         Returns:
-            Values of the function derivative with respect to the polar angle
+            Values of the function derivative with respect to the polar angle.
         """
         angles = np.asarray(angles)
         _, partial = sph_legendre_p(
@@ -165,10 +169,10 @@ class SphericalHarmonic:
         """Return the derivative with respect to the azimuthal angle.
 
         Args:
-            angles: Solid angles to evaluate the derivative at
+            angles: Solid angles to evaluate the derivative at.
 
         Returns:
-            Values of the function derivative with respect to the azimuthal angle
+            Values of the function derivative with respect to the azimuthal angle.
         """
         angles = np.asarray(angles)
         result = sph_legendre_p(
@@ -183,11 +187,11 @@ def geodesic_cos(
     """Compute cosine of the geodesic distance between two arrays of solid angles.
 
     Args:
-        angles_a: First array of angles
-        angles_b: Second array of angles
+        angles_a: First array of angles.
+        angles_b: Second array of angles.
 
     Returns:
-        Cosine of the geodesic distance between the angles
+        Cosine of the geodesic distance between the angles.
     """
     angles_a = np.asarray(angles_a)
     angles_b = np.asarray(angles_b)
@@ -209,11 +213,11 @@ class MaternInterpolator:
     """Sobolev-Matérn interpolator.
 
     Attributes:
-        _nodes (numpy.typing.NDArray[numpy.floating]): Interpolation nodes
-        _smoothness (float): Smoothness parameter of the interpolation
-        _lmax (int): Maximum order of the spherical harmonic expansion
-        _weights (numpy.typing.NDArray[numpy.floating]): Quadrature weights for the interpolation nodes
-        _oper (numpy.NDArray[numpy.floating]): Coefficients of cardinal basis functions in the spherical-harmonic basis
+        _nodes (numpy.typing.NDArray[numpy.floating]): Interpolation nodes.
+        _smoothness (float): Smoothness parameter of the interpolation.
+        _lmax (int): Maximum order of the spherical harmonic expansion.
+        _weights (numpy.typing.NDArray[numpy.floating]): Quadrature weights for the interpolation nodes.
+        _oper (numpy.NDArray[numpy.floating]): Coefficients of weighted cardinal basis functions in the spherical-harmonic basis.
     """
 
     def __init__(
@@ -225,13 +229,13 @@ class MaternInterpolator:
     ):
         """Initialize interpolator over the given nodes.
 
-        Smoothness parameter 3 should yield accurate second-order derivatives.
+        Smoothness parameter equal to 3 should yield accurate second-order derivatives.
 
         Args:
-            nodes: Nodes of interpolation
-            weights: Optional quadrature weights
-            smoothness: Smoothness of the interpolation defaults to 3.0
-            lmax: Order of kernel expansion defaults to the square root of the number of particles
+            nodes: Nodes of interpolation.
+            weights: Optional quadrature weights.
+            smoothness: Smoothness of the interpolation defaults to 3.0.
+            lmax: Order of kernel expansion defaults to the square root of the number of particles.
         """
         sz = len(nodes)
         self._nodes = np.array(nodes)
@@ -256,7 +260,7 @@ class MaternInterpolator:
         )
 
     def basis(self) -> Iterator[SphericalHarmonic]:
-        """Return generator of basis functions."""
+        """Return generator of the basis functions."""
         for ell in range(self._lmax + 1):
             for m in range(-ell, ell + 1):
                 yield SphericalHarmonic((ell, m))
@@ -273,7 +277,7 @@ class MaternInterpolator:
         )
 
     def __getitem__(self, index):
-        """Return cardinal function associated with the given point index."""
+        """Return weighted cardinal function associated with the given point index."""
 
         def wrapper(angles: ArrayLike) -> NDArray[np.floating] | np.floating:
             return self._oper[index] @ [sh(angles) for sh in self.basis()]
@@ -281,11 +285,11 @@ class MaternInterpolator:
         return wrapper
 
     def __iter__(self):
-        """Return Matern cardinal functions."""
+        """Return generator of weighted cardinal functions."""
         return (self[i] for i in range(len(self)))
 
     def __len__(self):
-        """Return number of cardinal functions."""
+        """Return number of weighted cardinal functions."""
         return len(self._nodes)
 
     def chi(
@@ -294,10 +298,10 @@ class MaternInterpolator:
         """Return values of the cardinal functions.
 
         Args:
-            angles: Solid angles to evaluate the cardinal functions at, which default to the interpolation nodes
+            angles: Solid angles to evaluate the cardinal functions at (the interpolation nodes assumed by default).
 
         Returns:
-            Values of the cardinal functions at the given angles
+            Values of the cardinal functions evaluated at the given solid angles.
         """
         if angles is None:
             return np.eye(len(self)) / np.sqrt(self._weights)
@@ -311,10 +315,10 @@ class MaternInterpolator:
         """Return derivatives of the cardinal functions with respect to the polar angle.
 
         Args:
-            angles: Solid angles to evaluate the derivatives at, which default to the interpolation nodes
+            angles: Solid angles to evaluate the derivatives at (the interpolation nodes assumed by default).
 
         Returns:
-            Derivatives of the cardinal functions with respect to the polar angle at the given angles
+            Derivatives of the cardinal functions with respect to the polar angle evaluated at the solid given angles.
         """
         angles = self._nodes if angles is None else np.asarray(angles)
         f_theta = np.array([sh.partial_theta(angles) for sh in self.basis()])
@@ -326,17 +330,17 @@ class MaternInterpolator:
         """Return derivatives of the cardinal functions with respect to the azimuth.
 
         Args:
-            angles: Solid angles to evaluate the derivatives at, which default to the interpolation nodes
+            angles: Solid angles to evaluate the derivatives at (the interpolation nodes assumed by default).
 
         Returns:
-            Derivatives of the cardinal functions with respect to the azimuthal angle at the given angles
+            Derivatives of the cardinal functions with respect to the azimuthal angle evaluated at the given solid angles
         """
         angles = self._nodes if angles is None else np.asarray(angles)
         f_phi = np.array([sh.partial_phi(angles) for sh in self.basis()])
         return self._oper @ f_phi
 
     def partial_theta(self):
-        """Return matrix form of the derivative operator with respect to theta."""
+        """Return matrix form of the derivative operator with respect to polar angle."""
         return np.einsum(
             "q,pq,rq",
             self._weights,  # q,
@@ -345,7 +349,7 @@ class MaternInterpolator:
         )
 
     def partial_phi(self):
-        """Return matrix form of the derivative operator with respect the phi."""
+        """Return matrix form of the derivative operator with respect the azimuthal angle."""
         return np.einsum(
             "q,pq,rq",
             self._weights,  # q,
