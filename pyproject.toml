@@ -42,5 +42,5 @@ extend-select = ["D"]
 ignore = [
   "D203",  # no blank line before class docstring (keep D211)
   "D213",  # summary on first line (keep D212)
-  "D400", "D413", "D415", # Summary without period
+#   "D400", "D413", "D415", # Summary without period
 ]

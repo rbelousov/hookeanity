@@ -1,7 +1,7 @@
 """Logging configuration.
 
 Attributes:
-    logger: Configured `loguru` logger
+    logger (loguru.logger): Configured `loguru` logger.
 """
 
 from loguru import logger as _logger

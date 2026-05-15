@@ -4,8 +4,8 @@ import pytest
 from hookeanity.utils import young_poisson_to_lame, lame_to_young_poisson
 
 
-def test_young_poisson_to_lame_known_values():
-    """Test Young and Poisson to Lamé conversion."""
+def test_young_poisson_to_lame():
+    """Test conversion of Young modulus and Poisson ratio to Lamé coefficients."""
     modulus = 1000.0
     nu = 0.3
 
@@ -15,8 +15,8 @@ def test_young_poisson_to_lame_known_values():
     assert lam == pytest.approx(modulus * nu / ((1 + nu) * (1 - 2 * nu)))
 
 
-def test_lame_to_young_poisson_known_values():
-    """Test Lamé to Young and Poisson conversion."""
+def test_lame_to_young_poisson():
+    """Test conversion of Lamé coefficients to Young modulus and Poisson ratio."""
     mu = 384.61538461538464
     lam = 576.9230769230769
 
@@ -35,8 +35,8 @@ def test_lame_to_young_poisson_known_values():
         (5000.0, 0.45),
     ],
 )
-def test_round_trip_young_poisson_to_lame_and_back(modulus, nu):
-    """Test invertibility from Young and Possion."""
+def test_young_poisson(modulus, nu):
+    """Test reversibility of conversion from Young modulus and Possion ratio to Lamé coefficients."""
     lam, mu = young_poisson_to_lame(modulus, nu)
     E_back, nu_back = lame_to_young_poisson(lam, mu)
 
@@ -53,8 +53,8 @@ def test_round_trip_young_poisson_to_lame_and_back(modulus, nu):
         (1000.0, 2000.0),
     ],
 )
-def test_round_trip_lame_to_young_poisson_and_back(mu, lam):
-    """Test invertibility from Lamé coefficients."""
+def test_lame(mu, lam):
+    """Test reversibility of conversion from Lamé coefficients to Young modulus and Possion ratio."""
     modulus, nu = lame_to_young_poisson(lam, mu)
     lam_back, mu_back = young_poisson_to_lame(modulus, nu)
 
