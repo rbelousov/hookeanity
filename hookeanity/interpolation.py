@@ -19,17 +19,17 @@ class Interpolation:
     """Expansion of a scalar-valued function in spherical coordinates.
 
     Attributes:
-        _resolution (tuple[int, int]): Number of radial points and angular resolution parameter
-        _radii (numpy.NDArray[numpy.floating]): Radial quadrature points
-        _rws (numpy.NDArray[numpy.floating]): Radial quadrature weights
-        _angles (numpy.NDArray[numpy.floating]): Angular quadrature points (theta, phi)
-        _aws (numpy.NDArray[numpy.floating]): Angular quadrature weights
-        _radial_functions (numpy.NDArray[numpy.floating]): List of radial basis functions
-        _angular_functions (numpy.NDArray[numpy.floating]): List of angular basis functions
-        _radial_values (numpy.NDArray[numpy.floating]): Radial basis functions evaluated at the radial quadrature points
-        _angular_values (numpy.NDArray[numpy.floating]): Angular basis functions evaluated at the angular quadrature points
-        _bfs (numpy.NDArray[numpy.floating]): Basis functions evaluated at the quadrature points
-        _wts (numpy.NDArray[numpy.floating]): Combined quadrature weights for the spherical grid
+        _resolution (tuple[int, int]): Number of radial points and angular resolution parameter.
+        _radii (numpy.NDArray[numpy.floating]): Radial quadrature points.
+        _rws (numpy.NDArray[numpy.floating]): Radial quadrature weights.
+        _angles (numpy.NDArray[numpy.floating]): Angular quadrature points (theta, phi).
+        _aws (numpy.NDArray[numpy.floating]): Angular quadrature weights.
+        _radial_functions (numpy.NDArray[numpy.floating]): List of radial basis functions.
+        _angular_functions (numpy.NDArray[numpy.floating]): List of angular basis functions.
+        _radial_values (numpy.NDArray[numpy.floating]): Radial basis functions evaluated at the radial quadrature points.
+        _angular_values (numpy.NDArray[numpy.floating]): Angular basis functions evaluated at the angular quadrature points.
+        _bfs (numpy.NDArray[numpy.floating]): Basis functions evaluated at the quadrature points.
+        _wts (numpy.NDArray[numpy.floating]): Combined quadrature weights for the 3D spherical grid.
     """
 
     def __init__(
@@ -41,15 +41,15 @@ class Interpolation:
         """Initialize interpolation on the given resolution.
 
         Args:
-            resolution: Tuple (nr, nang), where nr is the number of radial points and nang is an angular resolution parameter such that
-                for 'fibonacci', it corresponds to the number of angular points
-                for 'gauss-legendre-fourier', it corresponds to the number of latitudinal nodes
-            lmax: Maximum order of the spherical harmonic expansion
-            angular_grid: Type of discretization in the angular component
+            resolution: Tuple `(nr, nang)`, where `nr` is the number of radial points and `nang` is an angular resolution parameter interpreted according to the argument `angular_grid`.
+                Specifically, it corresponds to the number of angular points in the 'fibonacci' grid, and
+                to the number of latitudinal nodes in the 'gauss-legendre-fourier' grid.
+            lmax: Maximum order of the spherical harmonic expansion of the Sobolev-Matérn kernels.
+            angular_grid: Type of discretization in the angular component ("fibonacci" or "gauss-legendre-fourier").
         """
+        self._resolution = resolution
         self._radii, self._rws = RadialPolynomial.quadrature(resolution[0])
 
-        self._resolution = resolution
         if angular_grid == "fibonacci":
             self._angles = fibonacci_points(resolution[1])
             self._aws = np.full(resolution[1], fibonacci_weight(resolution[1]))
@@ -93,20 +93,20 @@ class Interpolation:
         """Return transformation matrix from the normal modes."""
         return self._bfs.T
 
-    def _bfs_r(self):
+    def _bfs_r(self) -> NDArray[np.floating]:
         """Return radial derivatives of the basis functions."""
         poly_r = np.array([p(self._radii, True) for p in self._radial_functions])
         sz = len(self)
         return np.einsum("pr,ca->pcra", poly_r, self._angular_values).reshape(sz, sz)
 
-    def _bfs_theta(self):
+    def _bfs_theta(self) -> NDArray[np.floating]:
         """Return polar derivatives of the basis functions."""
         sz = len(self)
         return np.einsum(
             "pr,ca->pcra", self._radial_values, self._matern.chi_theta()
         ).reshape(sz, sz)
 
-    def _bfs_phi(self):
+    def _bfs_phi(self) -> NDArray[np.floating]:
         """Return polar derivatives of the basis functions."""
         sz = len(self)
         return np.einsum(
@@ -122,7 +122,7 @@ class Interpolation:
         return np.einsum("p,ap,bp", self._wts, self._bfs, self._bfs_theta())
 
     def partial_phi(self) -> NDArray[np.floating]:
-        """Return azimuthal derivative operator."""
+        """Return derivative operator with respect to the azimuthal component."""
         return np.einsum("p,ap,bp", self._wts, self._bfs, self._bfs_phi())
 
     def _jacobian_x(self, arg: Point | Grid) -> Point | VectorValues:
@@ -131,10 +131,10 @@ class Interpolation:
         This method satisfies the signature of `VectorField`.
 
         Args:
-            arg: Points to evaluate the Jacobian
+            arg: Points to evaluate the Jacobian.
 
         Returns:
-            First column of the Jacobian matrix at the given point in spherical coordinates
+            First column of the Jacobian matrix in spherical coordinates.
         """
         if instance(arg, Point):
             jx = np.zeros(DIM)
@@ -153,10 +153,10 @@ class Interpolation:
         This method satisfies the signature of `VectorField`.
 
         Args:
-            arg: Points to evaluate the Jacobian
+            arg: Points to evaluate the Jacobian.
 
         Returns:
-            Second column of the Jacobian matrix at the given point in spherical coordinates
+            Second column of the Jacobian matrix in spherical coordinates.
         """
         if instance(arg, Point):
             jy = np.zeros(DIM)
@@ -165,9 +165,9 @@ class Interpolation:
             jy = np.zeros((len(arg), DIM))
             xi, theta, phi = arg.T
         jy[..., 0] = np.sin(theta) * np.sin(phi)
-        jy[..., 1] = np.cos(theta) * np.sin(phi) / xi  # if xi > eps else 0.0
+        jy[..., 1] = np.cos(theta) * np.sin(phi) / xi
         tmp = xi * np.sin(theta)
-        jy[..., 2] = np.cos(phi) / tmp  # if tmp > eps else 0.0
+        jy[..., 2] = np.cos(phi) / tmp
         return jy
 
     def _jacobian_z(self, arg: Point | Grid) -> Point | VectorValues:
@@ -176,10 +176,10 @@ class Interpolation:
         This method satisfies the signature of `VectorField`.
 
         Args:
-            arg: Points to evaluate the Jacobian
+            arg: Points to evaluate the Jacobian.
 
         Returns:
-            Third column of the Jacobian matrix at the given point in spherical coordinates
+            Third column of the Jacobian matrix in spherical coordinates.
         """
         if instance(arg, Point):
             jz = np.zeros(DIM)
@@ -188,10 +188,10 @@ class Interpolation:
             jz = np.zeros((len(arg), DIM))
             xi, theta, phi = arg.T
         jz[..., 0] = np.cos(theta)
-        jz[..., 1] = -np.sin(theta) / xi  # if np.abs(xi) > eps else 0.0
+        jz[..., 1] = -np.sin(theta) / xi
         return jz
 
-    def partial_x(self):
+    def partial_x(self) -> NDArray[np.floating]:
         """Return derivative operator with respect to the Cartesian x component."""
         jxs = self._jacobian_x(self.grid())
 
@@ -203,7 +203,7 @@ class Interpolation:
 
         return term1 + term2 + term3
 
-    def partial_y(self):
+    def partial_y(self) -> NDArray[np.floating]:
         """Return derivative operator with respect to the Cartesian y component."""
         jys = self._jacobian_y(self.grid())
 
@@ -215,7 +215,7 @@ class Interpolation:
 
         return term1 + term2 + term3
 
-    def partial_z(self):
+    def partial_z(self) -> NDArray[np.floating]:
         """Return derivative operator with respect to the Cartesian z component."""
         jzs = self._jacobian_z(self.grid())
 
@@ -228,7 +228,7 @@ class Interpolation:
         return term1 + term2 + term3
 
     def __len__(self) -> int:
-        """Return number of quadrature points or basis functions."""
+        """Return number of quadrature points / basis functions."""
         return self.nradii * self.nangles
 
     @property
@@ -248,7 +248,7 @@ class Interpolation:
 
     @property
     def resolution(self) -> tuple[int, int]:
-        """Return number of radial points and angular resolution parameter."""
+        """Return number spatial resolution specification."""
         return self._resolution
 
     @property

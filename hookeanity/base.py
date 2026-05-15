@@ -4,8 +4,8 @@ Attributes:
     DIM (int): Number of spatial dimensions
     TypeHint (typing.TypeVar): Type variable for hints
     Real (typing.TypeAlias): Native python or numpy floating-point number
-    Point (typing.TypeAlias): Point coordinates
-    Grid (typing.TypeAlias): Grid of point coordinates
+    Point (typing.TypeAlias): Point coordinates in 3D
+    Grid (typing.TypeAlias): Grid of 3D point coordinates
     ScalarField (typing.TypeAlias): Scalar field defined over a grid
     VectorField (typing.TypeAlias): Vector field defined over a grid
     ScalarValues (typing.TypeAlias): Scalar values on a mesh
@@ -24,7 +24,6 @@ from numpy.typing import NDArray
 DIM = 3
 TypeHint = TypeVar("TypeHint")
 Real: TypeAlias = float | np.floating
-
 Point: TypeAlias = Float[NDArray[np.floating], "coordinates"]  # noqa: F722, F821
 Grid: TypeAlias = Float[NDArray[np.floating], "points coordinates"]  # noqa: F722, F821
 ScalarValues: TypeAlias = Float[NDArray[np.floating], "points"]  # noqa: F722, F821

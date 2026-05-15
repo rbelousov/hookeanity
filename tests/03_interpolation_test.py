@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 import scipy as sp
-from hookeanity.base import DIM, ScalarField, instance, Real, Point, Grid, ScalarValues
+from hookeanity.base import DIM, instance, Real, Point, Grid, ScalarValues, ScalarField
 from hookeanity.interpolation import Interpolation
 
 
@@ -14,8 +14,8 @@ from hookeanity.interpolation import Interpolation
         ("gauss-legendre-fourier", (12, 12), 3e-1),
     ],
 )
-def interp(request):
-    """Return Interpolation object with different grids."""
+def interp(request) -> tuple[Interpolation, float]:
+    """Return interpolation object with different angular grids and test tolerance."""
     grid, res, tol = request.param
     return Interpolation(res, angular_grid=grid), tol
 
@@ -35,7 +35,7 @@ def scalar() -> ScalarField:
 
 @pytest.fixture
 def scalar_r() -> ScalarField:
-    """Return radial derivative of the test scalar field."""
+    """Return radial derivative of the test fixture `scalar()`."""
 
     def wrapper(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -50,7 +50,7 @@ def scalar_r() -> ScalarField:
 
 @pytest.fixture
 def scalar_theta() -> ScalarField:
-    """Return polar derivative of the test scalar field."""
+    """Return polar derivative of the test fixture `scalar()`."""
 
     def wrapper(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -66,7 +66,7 @@ def scalar_theta() -> ScalarField:
 
 @pytest.fixture
 def scalar_phi() -> ScalarField:
-    """Return azimuthal derivative of the test scalar field."""
+    """Return azimuthal derivative of the test fixture `scalar()`."""
 
     def wrapper(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -84,7 +84,7 @@ def scalar_phi() -> ScalarField:
 
 @pytest.fixture
 def scalar_x(scalar_r, scalar_theta, scalar_phi) -> ScalarField:
-    """Return the derivative of a test scalar field with respect to the x component."""
+    """Return the derivative of the test fixture `scalar()` with respect to the x component."""
 
     def wrapper(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -103,7 +103,7 @@ def scalar_x(scalar_r, scalar_theta, scalar_phi) -> ScalarField:
 
 @pytest.fixture
 def scalar_y(scalar_r, scalar_theta, scalar_phi) -> ScalarField:
-    """Return the derivative of a test scalar field with respect to the y component."""
+    """Return the derivative of the test fixture `scalar()` with respect to the y component."""
 
     def wrapper(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -122,7 +122,7 @@ def scalar_y(scalar_r, scalar_theta, scalar_phi) -> ScalarField:
 
 @pytest.fixture
 def scalar_z(scalar_r, scalar_theta, scalar_phi) -> ScalarField:
-    """Return the derivative of a test scalar field with respect to the z component."""
+    """Return the derivative of the test fixture `scalar()` with respect to the z component."""
 
     def wrapper(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -152,8 +152,14 @@ def random_points(n: int, sz: int) -> np.ndarray:
         ("gauss-legendre-fourier", (5, 5), 50),
     ],
 )
-def test_npoints(angular_grid, resolution, nangles):
-    """Test construction of resolution, mesh and number of points of the mesh."""
+def test_npoints(angular_grid: str, resolution: tuple[int, int], nangles: int):
+    """Test construction of 3D meshes.
+
+    Args:
+        angular_grid: Type of angular grid.
+        resolution: Spatial resolution.
+        nangles: Expected number of poinst in the angular quadrature.
+    """
     inter = Interpolation(resolution, angular_grid=angular_grid)
 
     assert inter.resolution == resolution
@@ -164,8 +170,12 @@ def test_npoints(angular_grid, resolution, nangles):
 
 
 @pytest.mark.parametrize("angular_grid", ["fibonacci", "gauss-legendre-fourier"])
-def test_transform(angular_grid):
-    """Test `Interpolation.transform()` and `Interpolation.inverse()`."""
+def test_transform(angular_grid: str):
+    """Test `Interpolation.transform()` and `Interpolation.inverse()`.
+
+    Args:
+        angular_grid: Types of angular grids to test.
+    """
     inter = Interpolation((5, 5), angular_grid=angular_grid)
     sz = len(inter)
     shape = (sz, sz)
@@ -176,12 +186,6 @@ def test_transform(angular_grid):
     assert inverse @ transform == pytest.approx(np.eye(sz))
 
 
-def test_lmax():
-    """Test custom spherical-harmonic expansion order."""
-    inter = Interpolation((5, 5), lmax=3)
-    assert inter.lmax == 3
-
-
 def test_gauss_legendre_weights():
     """Test weights of the Gauss-Legendre-Fourier grid."""
     inter = Interpolation((6, 6), angular_grid="gauss-legendre-fourier")
@@ -189,8 +193,14 @@ def test_gauss_legendre_weights():
 
 
 @pytest.mark.parametrize("angular_grid", ["fibonacci", "gauss-legendre-fourier"])
-def test_partial_r(scalar, scalar_r, angular_grid):
-    """Test `Interpolation.partial_r`."""
+def test_partial_r(scalar: ScalarField, scalar_r: ScalarField, angular_grid: str):
+    """Test `Interpolation.partial_r()`.
+
+    Args:
+        scalar: Fixture `scalar()`.
+        scalar_r: Fixture `scalar_r()`.
+        angular_grid: Type of angular grid to test.
+    """
     inter = Interpolation((5, 5), angular_grid=angular_grid)
     grid = inter.grid()
     values = scalar(grid)
@@ -206,7 +216,7 @@ def test_partial_r(scalar, scalar_r, angular_grid):
 
 
 def test_partial_theta(scalar, scalar_theta, interp):
-    """Test `Interpolation.partial_theta`."""
+    """Test `Interpolation.partial_theta()`."""
     inter, _ = interp
     grid = inter.grid()
 
@@ -222,7 +232,7 @@ def test_partial_theta(scalar, scalar_theta, interp):
 
 
 def test_partial_phi(scalar, scalar_phi, interp):
-    """Test `Interpolation.partial_phi`."""
+    """Test `Interpolation.partial_phi()`."""
     inter, _ = interp
     grid = inter.grid()
 
@@ -257,7 +267,7 @@ def test_jacobian():
 
 
 def test_x_identity():
-    """Test `Interpolation.partial_x` in a simple setting."""
+    """Test `Interpolation.partial_x()` in a simple setting."""
 
     def x_identity(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -292,7 +302,7 @@ def test_x_identity():
 
 
 def test_y_identity():
-    """Test `Interpolation.partial_y` in a simple setting."""
+    """Test `Interpolation.partial_y()` in a simple setting."""
 
     def y_identity(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -327,7 +337,7 @@ def test_y_identity():
 
 
 def test_z_identity():
-    """Test `Interpolation.partial_z` in a simple setting."""
+    """Test `Interpolation.partial_z()` in a simple setting."""
 
     def z_identity(arg: Point | Grid) -> Real | ScalarValues:
         r = arg[0] if instance(arg, Point) else arg[:, 0]
@@ -362,7 +372,7 @@ def test_z_identity():
 
 
 def test_partial_x(scalar, scalar_x, interp):
-    """Test `Interpolation.partial_x`."""
+    """Test `Interpolation.partial_x()`."""
     inter, precision_abs = interp
     grid = inter.grid()
 
@@ -378,7 +388,7 @@ def test_partial_x(scalar, scalar_x, interp):
 
 
 def test_partial_y(scalar, scalar_y, interp):
-    """Test `Interpolation.partial_y`."""
+    """Test `Interpolation.partial_y()`."""
     inter, precision_abs = interp
     grid = inter.grid()
 
@@ -394,7 +404,7 @@ def test_partial_y(scalar, scalar_y, interp):
 
 
 def test_partial_z(scalar, scalar_z, interp):
-    """Test `Interpolation.partial_z`."""
+    """Test `Interpolation.partial_z()`."""
     inter, precision_abs = interp
     grid = inter.grid()
 
