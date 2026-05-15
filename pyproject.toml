@@ -7,7 +7,9 @@ name = "hookeanity"
 version = "0.0.0"
 description = "Illustration of the overdamped fluctuating elastodynamics model."
 authors = [
-    { name = "Roman Belousov", email = "roman.belousov@embl.de" }
+    { name = "Roman Belousov", email = "roman.belousov@embl.de" },
+    { name = "Michele Lupini", email = "michele.lupini@embl.de" },
+    { name = "Laeschkir Würthner", email = "laeschkir.wuerthner@embl.de" }
 ]
 license = "MIT"
 license-files = ["LICENSE"]
@@ -22,7 +24,7 @@ dependencies = [
 tests = ["pytest"]
 dev = ["pytest", "pyright", "pydocstringformatter", "ruff"]
 doc = ["mkdocs", "mkdocstrings[python]", "mkdocs-material"]
-examples = ["matplotlib", "jupyterlab", "ipywidgets", "tqdm", "pillow", "pyvista", "trame"]
+examples = ["matplotlib", "jupyterlab", "ipywidgets", "tqdm", "pyvista[jupyter]"]
 
 [tool.setuptools]
 packages = ["hookeanity"]
@@ -35,5 +37,5 @@ max-line-length = 88
 write = true
 
 [tool.ruff]
-src = ["hookeanity", "tests"]
+src = ["hookeanity", "tests", "examples"]
 include = ["**/*.py", "**/*.ipynb"]
