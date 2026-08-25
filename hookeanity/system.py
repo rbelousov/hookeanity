@@ -592,7 +592,7 @@ class System:
         with h5py.File(filepath, "r") as f:
             resolution = h5.attr_int_pair(f, "resolution")
             gamma = h5.attr_float(f, "gamma")
-            lam = h5.attr_int(f, "lambda")
+            lam = h5.attr_float(f, "lambda")
             mu = h5.attr_float(f, "mu")
             dt = h5.attr_float(f, "dt")
             f_ext = h5.attr_float(f, "f_ext")
