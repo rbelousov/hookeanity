@@ -18,16 +18,15 @@ from collections.abc import Callable
 from typeguard import check_type, TypeCheckError
 from jaxtyping import Float
 import numpy as np
-from numpy.typing import NDArray
 
 
 DIM = 3
 TypeHint = TypeVar("TypeHint")
 Real: TypeAlias = float | np.floating
-Point: TypeAlias = Float[NDArray[np.floating], "coordinates"]  # noqa: F722, F821
-Grid: TypeAlias = Float[NDArray[np.floating], "points coordinates"]  # noqa: F722, F821
-ScalarValues: TypeAlias = Float[NDArray[np.floating], "points"]  # noqa: F722, F821
-VectorValues: TypeAlias = Float[NDArray[np.floating], "points components"]  # noqa: F722, F821
+Point: TypeAlias = Float[np.ndarray, "coordinates"]  # noqa: F722, F821
+Grid: TypeAlias = Float[np.ndarray, "points coordinates"]  # noqa: F722, F821
+ScalarValues: TypeAlias = Float[np.ndarray, "points"]  # noqa: F722, F821
+VectorValues: TypeAlias = Float[np.ndarray, "points components"]  # noqa: F722, F821
 ScalarField: TypeAlias = Callable[[Point | Grid], Real | ScalarValues]
 VectorField: TypeAlias = Callable[[Point | Grid], Point | VectorValues]
 
