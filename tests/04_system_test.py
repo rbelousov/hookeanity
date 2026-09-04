@@ -79,7 +79,7 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     """Test saving and loading system data in the HDF5 format."""
     filepath = tmp_path / "system.h5"
 
-    lam, mu, dt = 2.0, 2.0, 1e-2
+    lam, mu, dt = 2.25, 2.0, 1e-2
     gamma, f_ext = 2.5, 0.5
     f_loc = (0.7, 1.2)
     kbt = 1.5
