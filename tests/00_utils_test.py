@@ -1,7 +1,7 @@
 """Test `hookeanity.utils` module."""
 
 import pytest
-from hookeanity.utils import young_poisson_to_lame, lame_to_young_poisson
+from hookeanity.utils import lame_to_young_poisson, young_poisson_to_lame
 
 
 def test_young_poisson_to_lame():

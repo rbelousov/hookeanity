@@ -1,9 +1,11 @@
 """Numerical methods for functions of the solid angle in spherical coordinates."""
 
-import numpy as np
 from collections.abc import Iterator
-from numpy.typing import NDArray, ArrayLike
-from scipy.special import sph_legendre_p, roots_legendre
+
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
+from scipy.special import roots_legendre, sph_legendre_p
+
 from .base import Real, instance
 
 

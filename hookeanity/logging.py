@@ -4,8 +4,9 @@ Attributes:
     logger (loguru.logger): Configured `loguru` logger.
 """
 
-from loguru import logger as _logger
 import sys
+
+from loguru import logger as _logger
 
 _logger.remove()
 _logger.add(

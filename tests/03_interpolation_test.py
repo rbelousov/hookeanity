@@ -1,9 +1,9 @@
 """Tests for `hookeanity.interpolation` module."""
 
-import pytest
 import numpy as np
+import pytest
 import scipy as sp
-from hookeanity.base import DIM, instance, Real, Point, Grid, ScalarValues, ScalarField
+from hookeanity.base import DIM, Grid, Point, Real, ScalarField, ScalarValues, instance
 from hookeanity.interpolation import Interpolation
 
 

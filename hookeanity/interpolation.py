@@ -1,18 +1,20 @@
 """Inerpolation of functions in spherical coordinates over a unit ball."""
 
-from itertools import product
 from collections.abc import Iterator
+from itertools import product
+
 import numpy as np
 from numpy.typing import NDArray
-from .base import DIM, Point, Grid, VectorValues, instance
-from .radial import RadialPolynomial
+
 from .angular import (
+    MaternInterpolator,
     fibonacci_points,
     fibonacci_weight,
     gauss_legendre_fourier_points,
     gauss_legendre_fourier_weights,
-    MaternInterpolator,
 )
+from .base import DIM, Grid, Point, VectorValues, instance
+from .radial import RadialPolynomial
 
 
 class Interpolation:
@@ -36,7 +38,7 @@ class Interpolation:
         self,
         resolution: tuple[int, int],
         lmax: int | None = None,
-        angular_grid: str | str = "fibonacci",
+        angular_grid: str = "fibonacci",
     ):
         """Initialize interpolation on the given resolution.
 
@@ -183,10 +185,10 @@ class Interpolation:
         """
         if instance(arg, Point):
             jz = np.zeros(DIM)
-            xi, theta, phi = arg
+            xi, theta, _phi = arg
         else:
             jz = np.zeros((len(arg), DIM))
-            xi, theta, phi = arg.T
+            xi, theta, _phi = arg.T
         jz[..., 0] = np.cos(theta)
         jz[..., 1] = -np.sin(theta) / xi
         return jz

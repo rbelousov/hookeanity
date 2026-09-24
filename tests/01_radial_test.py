@@ -1,10 +1,10 @@
 """Test `hookeanity.radial` module."""
 
-import pytest
 import numpy as np
-from scipy.special import eval_jacobi
+import pytest
 from hookeanity.base import Real, instance
-from hookeanity.radial import jacobi_radau_quadrature, RadialPolynomial
+from hookeanity.radial import RadialPolynomial, jacobi_radau_quadrature
+from scipy.special import eval_jacobi
 
 
 def test_jacobi_radau_quadrature():

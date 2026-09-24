@@ -4,15 +4,16 @@ Attributes:
     GRID_CONFIGS: Grid specifications for solid angles.
 """
 
-import pytest
-import numpy as np
 import xml.etree.ElementTree as ET
-from typing import cast
-import h5py
-from hookeanity.base import DIM
-from hookeanity.system import System, Init
-from hookeanity.interpolation import Interpolation
 
+import h5py
+import numpy as np
+import pytest
+from hookeanity.base import DIM
+from hookeanity.interpolation import Interpolation
+from hookeanity.system import System
+from scipy.sparse.linalg import expm_multiply
+from scipy.spatial.transform import Rotation
 
 GRID_CONFIGS = [
     ("fibonacci", (5, 12), 60, 5),
@@ -84,6 +85,7 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     f_loc = (0.7, 1.2)
     kbt = 1.5
     method = "trotter"
+    rotation = Rotation.from_rotvec([0.1, -0.2, 0.3]).as_matrix()
 
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
 
@@ -101,6 +103,7 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
         rng=123,
         lmax=lmax,
         angular_grid=angular_grid,
+        rotation=rotation,
     )
 
     system.save(filepath)
@@ -126,7 +129,12 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     assert loaded.lmax == lmax
     assert loaded._method == method
     assert loaded._state == pytest.approx(state)
+    assert loaded.rotation() == pytest.approx(rotation)
     assert np.all(sample1 == sample2)
+    system()
+    loaded()
+    assert loaded.state() == pytest.approx(system.state())
+    assert loaded.rotation() == pytest.approx(system.rotation())
 
 
 def test_stress_divergence(system):
@@ -244,10 +252,10 @@ def test_system_smoke(system_zero_state):
         kbt=0.0,
         lmax=system_zero_state.lmax,
     )
-    assert not (sys_n._force == pytest.approx(sys_s._force))
+    assert sys_n._force != pytest.approx(sys_s._force)
     sys_n()()()
     sys_s()()()
-    assert not (sys_n._state == pytest.approx(sys_s._state))
+    assert sys_n._state != pytest.approx(sys_s._state)
 
     sys_trotter = System(
         system_zero_state.resolution,
@@ -289,7 +297,6 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
         1e-2,
         lmax=lmax,
         angular_grid=angular_grid,
-        init="no_translations",
     )
     sys1.save_cache(cache)
     sys2 = System(
@@ -300,7 +307,6 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
         lmax=lmax,
         cache=cache,
         angular_grid=angular_grid,
-        init="no_translations",
     )
     assert sys1.npoints == npoints
     assert sys2.npoints == npoints
@@ -312,6 +318,21 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
     assert np.all(sys1._bulk_from_surf == sys2._bulk_from_surf)
     assert np.all(sys1._trac_red == sys2._trac_red)
     assert np.all(sys1._force == sys2._force)
+    assert sys1._volume_weights == pytest.approx(sys2._volume_weights)
+
+    with h5py.File(cache, "r+") as f:
+        del f.attrs["rigid_projection"]
+    with pytest.raises(ValueError, match="rebuild the cache"):
+        System(
+            resolution,
+            2.0,
+            2.0,
+            1e-2,
+            lmax=lmax,
+            cache=cache,
+            angular_grid=angular_grid,
+        )
+    sys1.save_cache(cache)
 
     with pytest.raises(AssertionError, match="spherical-harmonic cutoffs"):
         System(resolution, 2.0, 2.0, 1e-2, cache=cache, angular_grid=angular_grid)
@@ -325,7 +346,6 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
             lmax=lmax,
             cache=cache,
             angular_grid=angular_grid,
-            init="no_translations",
         )
 
 
@@ -563,45 +583,94 @@ def test_surface_reduction(angular_grid, resolution, npoints, lmax):
     assert rigid.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
 
 
-@pytest.mark.parametrize(
-    ("init", "left_mode", "right_mode"),
-    [
-        ("no_rigid_motion", "no_rigid_motion", "no_rigid_motion"),
-        ("no_translations", "no_translations", "no_translations"),
-        ("no_rotations", "no_rotations", "no_rotations"),
-        (None, None, None),
-    ],
-)
-def test_surface_reduction_init_modes(
-    init: str | None, left_mode: str | None, right_mode: str | None
-):
-    """Test traction reduction under configurable rigid-motion projections."""
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_rotation_projection(angular_grid, resolution, npoints, lmax):
+    """Split noise into a proper rotation and a rotation-free full-body field."""
+    sys = System(resolution, 2.0, 2.0, 1e-2, lmax=lmax, angular_grid=angular_grid)
+    assert sys.rotation() == pytest.approx(np.eye(DIM))
+    omega = np.array([0.01, -0.02, 0.03])
+    rigid = sys._surface_rotation_modes @ omega
+    internal, extracted = sys._split_noise(rigid)
+    assert internal == pytest.approx(0, abs=1e-12)
+    assert extracted == pytest.approx(omega)
+
+    noise = np.random.default_rng(10).normal(size=sys.nsurf)
+    internal, extracted = sys._split_noise(noise)
+    positions = sys._reference_xyz - sys._center
+    modes = np.stack([np.cross(np.eye(DIM)[a], positions) for a in range(DIM)], axis=-1)
+    residual = sys._reconstruct_state(internal)
+    overlap = np.einsum("p,pai,pa->i", sys._volume_weights, modes, residual)
+    assert overlap == pytest.approx(0, abs=1e-10)
+    assert noise == pytest.approx(internal + sys._surface_rotation_modes @ extracted)
+
+
+@pytest.mark.parametrize("method", ["euler", "trotter", "strang"])
+def test_rotation_steps(method):
+    """Each integrator composes the fitted noise as finite SO(3) rotations."""
+    start = Rotation.from_rotvec([0.2, 0.1, -0.1]).as_matrix()
     sys = System(
-        (5, 12), 2.0, 3.0, 1e-2, f_ext=0.0, kbt=0.0, lmax=5, init=cast(Init, init)
+        (5, 12), 1.0, 1.0, 1e-2, kbt=0.4, lmax=5, method=method, rng=123, rotation=start
     )
-    bulk = slice(None, -sys.nsurf)
-    surface = slice(-sys.nsurf, None)
-    raw_trac_red = sys._trac[:, surface] + sys._trac[:, bulk] @ sys._bulk_from_surf
+    assert sys.rotation() == pytest.approx(start)
+    copied = sys.rotation()
+    copied[:] = 0
+    assert sys.rotation() == pytest.approx(start)
+    random = np.random.default_rng(123)
+    expected = start.copy()
+    for _ in range(3):
+        noise = sys._std * random.normal(size=sys.nsurf)
+        if method == "strang":
+            noise = expm_multiply(sys._trac_oper, noise, traceA=sys._trace)
+        omega = sys._rotation_fit @ noise
+        expected = expected @ Rotation.from_rotvec(omega).as_matrix()
+        sys()
+    assert sys.rotation() == pytest.approx(expected)
+    assert sys.rotation().T @ sys.rotation() == pytest.approx(np.eye(DIM), abs=1e-12)
+    assert np.linalg.det(sys.rotation()) == pytest.approx(1)
 
-    left_modes = sys._surface_rigid_modes(cast(Init, left_mode))
-    right_modes = sys._surface_rigid_modes(cast(Init, right_mode))
 
-    def projector(modes: np.ndarray) -> np.ndarray:
-        if modes.shape[1] == 0:
-            return np.eye(sys.nsurf)
-        u, singular_values, _ = np.linalg.svd(modes, full_matrices=False)
-        rank = np.count_nonzero(singular_values > 1e-12 * singular_values[0])
-        return np.eye(sys.nsurf) - u[:, :rank] @ u[:, :rank].T
+@pytest.mark.parametrize("method", ["euler", "trotter", "strang"])
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_pure_rotational_noise_step(
+    method, angular_grid, resolution, npoints, lmax, monkeypatch
+):
+    """Pure rotational noise turns the frame without deforming the body."""
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.4,
+        lmax=lmax,
+        angular_grid=angular_grid,
+        method=method,
+    )
+    omega = np.array([0.01, -0.02, 0.03])
+    normal = (sys._surface_rotation_modes @ omega) / sys._std
 
-    pl = projector(left_modes)
-    pr = projector(right_modes)
-    expected = pl @ raw_trac_red @ pr
-    assert sys._trac_red == pytest.approx(expected)
+    class FixedNoise:
+        def normal(self, size):
+            assert size == sys.nsurf
+            return normal
 
-    if left_modes.shape[1]:
-        assert left_modes.T @ sys._trac_red == pytest.approx(0, abs=1e-10)
-    if right_modes.shape[1]:
-        assert sys._trac_red @ right_modes == pytest.approx(0, abs=1e-10)
+    monkeypatch.setattr(sys, "_rng", FixedNoise())
+    sys()
+    assert sys.state() == pytest.approx(0, abs=1e-11)
+    assert sys.rotation() == pytest.approx(Rotation.from_rotvec(omega).as_matrix())
+
+
+def test_rotation_validation_and_lab_force():
+    """Reject invalid orientations and rotate a lab-fixed force into body axes."""
+    for invalid in (np.zeros((3, 3)), np.diag([-1, 1, 1]), np.full((3, 3), np.nan)):
+        with pytest.raises(ValueError, match="SO\\(3\\)"):
+            System((5, 12), 1.0, 1.0, 0.01, lmax=5, rotation=invalid)
+    rotation = Rotation.from_rotvec([0, np.pi / 2, 0]).as_matrix()
+    sys = System((5, 12), 1.0, 1.0, 0.01, lmax=5, kbt=0.0, f_ext=1.0, rotation=rotation)
+    assert sys._body_force().reshape(-1, DIM) == pytest.approx(
+        sys._force.reshape(-1, DIM) @ rotation
+    )
+    sys()
+    assert sys.rotation() == pytest.approx(rotation)
 
 
 def _vtk_array(root: ET.Element, name: str | None) -> np.ndarray:
@@ -635,6 +704,7 @@ def _surface_points_cartesian(sys: System) -> np.ndarray:
 def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
     """Test exporting surface data as a VTK StructuredGrid."""
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
+    rotation = Rotation.from_rotvec([0.1, -0.2, 0.3]).as_matrix()
     sys = System(
         resolution,
         1.0,
@@ -644,6 +714,7 @@ def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
         state=state,
         angular_grid=angular_grid,
         lmax=lmax,
+        rotation=rotation,
     )
 
     dense_resolution = 7
@@ -668,6 +739,17 @@ def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
     assert magnitude.shape == (len(points),)
     assert magnitude == pytest.approx(np.linalg.norm(displacement, axis=1))
     assert np.isfinite(points).all()
+    theta = np.linspace(0, np.pi, dense_resolution)
+    phi = np.linspace(0, 2 * np.pi, dense_resolution)
+    tg, pg = np.meshgrid(theta, phi)
+    radius = np.mean(sys.surface_points()[:, 0])
+    reference = sys._spherical_to_cartesian(
+        np.column_stack((np.full(len(tg.ravel()), radius), tg.ravel(), pg.ravel()))
+    )
+    internal = sys._build_vts_projection(dense_resolution) @ sys.surface()
+    expected_points = sys._center + (reference + internal - sys._center) @ rotation.T
+    assert points == pytest.approx(expected_points)
+    assert displacement == pytest.approx(points - reference)
 
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
@@ -717,6 +799,7 @@ def test_export_vts_projection_cache(tmp_path, angular_grid, resolution, npoints
 def test_export_vtp(tmp_path, angular_grid, resolution, npoints, lmax):
     """Test export of the surface data as VTK PolyData."""
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
+    rotation = Rotation.from_rotvec([0.1, -0.2, 0.3]).as_matrix()
     sys = System(
         resolution,
         1.0,
@@ -726,6 +809,7 @@ def test_export_vtp(tmp_path, angular_grid, resolution, npoints, lmax):
         state=state,
         angular_grid=angular_grid,
         lmax=lmax,
+        rotation=rotation,
     )
 
     filepath = tmp_path / "native.vtp"
@@ -745,9 +829,11 @@ def test_export_vtp(tmp_path, angular_grid, resolution, npoints, lmax):
     connectivity = _vtk_array(root, "connectivity").astype(int)
     offsets = _vtk_array(root, "offsets").astype(int)
 
-    assert points == pytest.approx(_surface_points_cartesian(sys) + sys.surface())
-    assert displacement == pytest.approx(sys.surface())
-    assert magnitude == pytest.approx(np.linalg.norm(sys.surface(), axis=1))
+    reference = _surface_points_cartesian(sys)
+    expected = sys._center + (reference + sys.surface() - sys._center) @ rotation.T
+    assert points == pytest.approx(expected)
+    assert displacement == pytest.approx(points - reference)
+    assert magnitude == pytest.approx(np.linalg.norm(displacement, axis=1))
     assert np.array_equal(point_ids, np.arange(sys.mesh[1]))
     assert connectivity.min() >= 0
     assert connectivity.max() < sys.mesh[1]

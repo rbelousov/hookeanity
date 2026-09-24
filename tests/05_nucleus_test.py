@@ -6,16 +6,16 @@ import xml.etree.ElementTree as ET
 from typing import TypedDict
 
 import h5py
+import hookeanity
 import numpy as np
 import pytest
+from hookeanity.nucleus import System, _covariance_factor, _transition_moments
+from hookeanity.system import AndularGrid
+from hookeanity.system import System as SpatialSystem
 from numpy.testing import assert_allclose, assert_array_equal
 from scipy.integrate import quad_vec
 from scipy.linalg import expm
-
-import hookeanity
-from hookeanity.nucleus import System, _covariance_factor, _transition_moments
-from hookeanity.system import System as SpatialSystem
-from hookeanity.system import AndularGrid
+from scipy.spatial.transform import Rotation
 
 
 class SpatialParameters(TypedDict):
@@ -44,6 +44,11 @@ class ToySystem(System):
         self._ela = np.column_stack((np.eye(3), -self._bulk_from_surf))
         self._trac = np.column_stack((np.zeros((3, 3)), self._trac_red))
         self._force = self._ext * np.array([1.0, -0.5, 0.25])
+
+    def _build_rotation_projection(self):
+        """A single surface point has no identifiable global rotation."""
+        self._rotation_fit = np.zeros((3, self.nsurf))
+        self._surface_rotation_modes = np.zeros((self.nsurf, 3))
 
 
 def toy(**kwargs):
@@ -172,6 +177,7 @@ def test_deterministic_and_zero_steps(dt, kbt):
     assert json.dumps(sys._rng.bit_generator.state) == rng_state
     if dt == 0:
         assert_array_equal(sys.state(), initial)
+        assert_array_equal(sys.rotation(), np.eye(3))
     else:
         rates = np.diag(sys._trac_red) / sys._gamma
         expected = np.exp(rates * dt) * initial[-1]
@@ -208,7 +214,8 @@ def test_interface():
         {"state": np.zeros((1, 3))},
         {"state": np.full((2, 3), np.nan)},
         {"angular_grid": "unknown"},
-        {"init": "unknown"},
+        {"rotation": np.diag([-1.0, 1.0, 1.0])},
+        {"rotation": np.zeros((3, 3))},
     ],
 )
 def test_invalid_parameters(kwargs):
@@ -240,70 +247,142 @@ def spatial_data(request, tmp_path_factory):
         lmax=lmax,
     )
     path = tmp_path_factory.mktemp(grid) / "spatial.h5"
-    legacy = SpatialSystem(**params)
-    legacy.save_cache(path)
-    return params, path, legacy
+    spatial = SpatialSystem(**params)
+    spatial.save_cache(path)
+    return params, path, spatial
 
 
-@pytest.mark.parametrize(
-    "init", ["no_rigid_motion", "no_translations", "no_rotations", None]
-)
-def test_spatial_reduction_and_rigid_modes(spatial_data, init):
+def test_spatial_reduction_and_rigid_modes(spatial_data):
     """Test reduction of bulk degrees of freedom."""
     params, _, _ = spatial_data
-    sys = System(**params, init=init, rng=42)
+    sys = System(**params, rng=42)
     raw = sys._trac[:, -sys.nsurf :] + sys._trac[:, : -sys.nsurf] @ sys._bulk_from_surf
-    modes = sys._surface_rigid_modes(init)
-    if modes.shape[1]:
-        q, _ = np.linalg.qr(modes)
-        p = np.eye(sys.nsurf) - q @ q.T
-        assert_allclose(sys._trac_red, p @ raw @ p, atol=1e-10)
-        # Corrected modes remain Brownian, and the external force still drives them.
-        assert_allclose(
-            q.T @ sys._mean, sys._dt / sys._gamma * q.T @ sys._force, atol=1e-12
-        )
-        assert_allclose(
-            q.T @ sys._covariance @ q,
-            2 * sys._kbt * sys._dt / sys._gamma * np.eye(q.shape[1]),
-            atol=1e-12,
-        )
-    else:
-        assert_allclose(sys._trac_red, raw)
+    modes = sys._surface_rigid_modes()
+    q, _ = np.linalg.qr(modes)
+    p = np.eye(sys.nsurf) - q @ q.T
+    assert_allclose(sys._trac_red, p @ raw @ p, atol=1e-10)
+    assert_allclose(
+        q.T @ sys._mean, sys._dt / sys._gamma * q.T @ sys._force, atol=1e-12
+    )
+    assert_allclose(
+        q.T @ sys._covariance @ q,
+        2 * sys._kbt * sys._dt / sys._gamma * np.eye(q.shape[1]),
+        atol=1e-12,
+    )
     assert sys()()() is sys
     assert_allclose(sys._ela @ sys.state().ravel(), 0, atol=1e-8)
+
+
+def test_rotation_projection(spatial_data):
+    """The reconstructed internal OU noise has no full-body rotation."""
+    params, cache, _ = spatial_data
+    sys = System(**params, cache=cache, rng=42)
+    omega = np.array([0.01, -0.02, 0.03])
+    internal, extracted = sys._split_noise(sys._surface_rotation_modes @ omega)
+    assert_allclose(internal, 0, atol=1e-12)
+    assert_allclose(extracted, omega, atol=1e-12)
+
+    noise = sys._noise_factor @ np.random.default_rng(7).normal(size=sys.nsurf)
+    internal, _ = sys._split_noise(noise)
+    centered = sys._reference_xyz - sys._center
+    modes = np.stack([np.cross(np.eye(3)[a], centered) for a in range(3)], axis=-1)
+    residual = sys._reconstruct_state(internal)
+    overlap = np.einsum("p,pai,pa->i", sys._volume_weights, modes, residual)
+    assert_allclose(overlap, 0, atol=1e-10)
+
+
+def test_pure_rotational_ou_step(spatial_data, monkeypatch):
+    """A pure rotational OU draw changes orientation without internal strain."""
+    params, _, _ = spatial_data
+    sys = System(**{**params, "f_ext": 0.0}, rng=42)
+    omega = np.array([0.01, -0.02, 0.03])
+    sys._noise_factor[:] = 0.0
+    sys._noise_factor[:, 0] = sys._surface_rotation_modes @ omega
+
+    class FixedNoise:
+        def normal(self, size):
+            assert size == sys.nsurf
+            value = np.zeros(size)
+            value[0] = 1.0
+            return value
+
+    monkeypatch.setattr(sys, "_rng", FixedNoise())
+    sys()
+    assert_allclose(sys.state(), 0, atol=1e-11)
+    assert_allclose(sys.rotation(), Rotation.from_rotvec(omega).as_matrix(), atol=1e-12)
+
+
+def test_rotation_composition_and_force_mean(spatial_data):
+    """Use start-of-step orientation for the exact frozen-frame force response."""
+    params, cache, _ = spatial_data
+    start = Rotation.from_rotvec([0.0, np.pi / 2, 0.0]).as_matrix()
+    sys = System(**{**params, "kbt": 0.0}, rotation=start, cache=cache)
+    force_body = sys._body_force() / sys._gamma
+    expected = quad_vec(
+        lambda t: expm(sys._trac_red * (t / sys._gamma)) @ force_body,
+        0,
+        sys._dt,
+    )[0]
+    sys()
+    assert_allclose(sys.surface().ravel(), expected, atol=1e-11)
+    assert_allclose(sys.rotation(), start, atol=1e-12)
+
+    stochastic = System(**{**params, "f_ext": 0.0}, rotation=start, rng=123)
+    random = np.random.default_rng(123)
+    expected_rotation = start.copy()
+    for _ in range(3):
+        noise = stochastic._noise_factor @ random.normal(size=stochastic.nsurf)
+        omega = stochastic._rotation_fit @ noise
+        expected_rotation = expected_rotation @ Rotation.from_rotvec(omega).as_matrix()
+        stochastic()
+    assert_allclose(stochastic.rotation(), expected_rotation, atol=1e-12)
+    assert_allclose(
+        stochastic.rotation().T @ stochastic.rotation(), np.eye(3), atol=1e-12
+    )
+    assert np.linalg.det(stochastic.rotation()) == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize("bitgen", [np.random.PCG64, np.random.MT19937])
 def test_checkpoint_continuation(spatial_data, tmp_path, bitgen):
     """Test checkpointing and continuation of the exact nucleus simulator."""
     params, cache, _ = spatial_data
-    sys = System(**params, cache=cache, rng=np.random.Generator(bitgen(42)))
+    rotation = Rotation.from_rotvec([0.1, -0.2, 0.3]).as_matrix()
+    sys = System(
+        **params, cache=cache, rng=np.random.Generator(bitgen(42)), rotation=rotation
+    )
     sys()()
     checkpoint = tmp_path / "nucleus.h5"
     assert sys.save(checkpoint) is sys
     with h5py.File(checkpoint, "r") as f:
         assert "method" not in f.attrs
+        assert "init" not in f.attrs
+        assert "rotation" in f
     loaded = System.load(checkpoint, cache=cache)
     assert type(loaded) is System
     assert not hasattr(loaded, "_method")
     assert_array_equal(sys.state(), loaded.state())
+    assert_allclose(sys.rotation(), loaded.rotation())
     for _ in range(3):
         assert_array_equal(sys().state(), loaded().state())
+        assert_array_equal(sys.rotation(), loaded.rotation())
 
 
-def test_legacy_checkpoint_and_cache(spatial_data, tmp_path):
-    """Test backward compatibility with the legacy `hookeanity.system.System`."""
-    params, cache, legacy = spatial_data
-    checkpoint = tmp_path / "legacy.h5"
-    legacy.save(checkpoint)
+def test_spatial_checkpoint_and_cache(spatial_data, tmp_path):
+    """Load a current spatial-system checkpoint and cache."""
+    params, cache, _ = spatial_data
+    rotation = Rotation.from_rotvec([0.15, 0.05, -0.2]).as_matrix()
+    spatial = SpatialSystem(**params, rotation=rotation)
+    checkpoint = tmp_path / "spatial.h5"
+    spatial.save(checkpoint)
     loaded = System.load(checkpoint, cache=cache)
     direct = System(**params, cache=cache)
-    assert_array_equal(loaded._force, legacy._force)
-    assert_array_equal(loaded._trac_red, legacy._trac_red)
+    assert_array_equal(loaded._force, spatial._force)
+    assert_array_equal(loaded._trac_red, spatial._trac_red)
     assert_array_equal(loaded._transition, direct._transition)
     assert not hasattr(loaded, "_method")
-    assert_array_equal(loaded.state(), legacy.state())
-    assert_array_equal(loaded._rng.random(5), legacy._rng.random(5))
+    assert_array_equal(loaded.state(), spatial.state())
+    assert_allclose(loaded.rotation(), rotation)
+    assert_array_equal(loaded._rng.random(5), spatial._rng.random(5))
 
 
 def test_cache_rebuild_and_validation(spatial_data, tmp_path):
@@ -317,6 +396,14 @@ def test_cache_rebuild_and_validation(spatial_data, tmp_path):
     assert not np.allclose(sys._covariance, other._covariance)
     own_cache = tmp_path / "nucleus-cache.h5"
     assert sys.save_cache(own_cache) is sys
+    with h5py.File(own_cache, "r+") as f:
+        assert f.attrs["rigid_projection"] == "all"
+        assert "init" not in f.attrs
+        f.attrs["rigid_projection"] = "no_rotations"
+    with pytest.raises(ValueError, match="incompatible rigid projection"):
+        System(**params, cache=own_cache)
+    with h5py.File(own_cache, "r+") as f:
+        f.attrs["rigid_projection"] = "all"
     other._transition[:] = np.nan
     other._mean[:] = np.nan
     other._covariance[:] = np.nan
@@ -337,7 +424,8 @@ def test_cache_rebuild_and_validation(spatial_data, tmp_path):
 def test_exports(spatial_data, tmp_path):
     """Test VTS and VTP exports."""
     params, cache, _ = spatial_data
-    sys = System(**params, cache=cache, rng=42)()
+    start = Rotation.from_rotvec([0.1, -0.2, 0.3]).as_matrix()
+    sys = System(**params, cache=cache, rng=42, rotation=start)()
     projection = tmp_path / "projection.h5"
     assert sys.save_projection_cache(projection, resolution=7) is sys
     assert sys.load_projection_cache(projection, resolution=7).shape == (
@@ -361,13 +449,43 @@ def test_exports(spatial_data, tmp_path):
             np.fromstring(expected.text, sep=" "),
             atol=1e-12,
         )
+    dense_root = ET.parse(direct).getroot()
+    dense_points_array = dense_root.find(".//Points/DataArray")
+    dense_vector_array = dense_root.find(".//DataArray[@Name='Displacement_Vector']")
+    assert dense_points_array is not None and dense_points_array.text is not None
+    assert dense_vector_array is not None and dense_vector_array.text is not None
+    dense_points = np.fromstring(dense_points_array.text, sep=" ").reshape(-1, 3)
+    dense_vectors = np.fromstring(dense_vector_array.text, sep=" ").reshape(-1, 3)
+    theta, phi = np.meshgrid(np.linspace(0, np.pi, 7), np.linspace(0, 2 * np.pi, 7))
+    radius = np.mean(sys.surface_points()[:, 0])
+    dense_reference = sys._spherical_to_cartesian(
+        np.column_stack((np.full(49, radius), theta.ravel(), phi.ravel()))
+    )
+    dense_internal = sys._build_vts_projection(7) @ sys.surface()
+    expected_dense = (
+        sys._center
+        + (dense_reference + dense_internal - sys._center) @ sys.rotation().T
+    )
+    assert_allclose(dense_points, expected_dense, atol=1e-12)
+    assert_allclose(dense_vectors, dense_points - dense_reference, atol=1e-12)
     assert sys.export_vtp(native) is sys
     root = ET.parse(native).getroot()
     assert root.attrib["type"] == "PolyData"
     vector = root.find(".//DataArray[@Name='Displacement_Vector']")
+    points_array = root.find(".//Points/DataArray")
     assert vector is not None
+    assert points_array is not None
     assert vector.text is not None
-    assert_allclose(np.fromstring(vector.text, sep=" ").reshape(-1, 3), sys.surface())
+    assert points_array.text is not None
+    points = np.fromstring(points_array.text, sep=" ").reshape(-1, 3)
+    reference = sys._spherical_to_cartesian(sys.surface_points())
+    expected_points = (
+        sys._center + (reference + sys.surface() - sys._center) @ sys.rotation().T
+    )
+    assert_allclose(points, expected_points, atol=1e-12)
+    assert_allclose(
+        np.fromstring(vector.text, sep=" ").reshape(-1, 3), points - reference
+    )
 
 
 @pytest.mark.parametrize("cls", [System, SpatialSystem])

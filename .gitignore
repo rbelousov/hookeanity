@@ -6,3 +6,4 @@ build
 site
 *.vscode
 *.codex
+pyrightconfig.json

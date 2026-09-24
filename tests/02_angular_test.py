@@ -1,20 +1,21 @@
 """Test `hookeanity.angular` module."""
 
-import pytest
 from typing import cast
+
 import numpy as np
-from scipy.special import sph_legendre_p, legendre
-from hookeanity.base import Real, instance
+import pytest
 from hookeanity.angular import (
-    SphericalHarmonic,
     MaternInterpolator,
+    SphericalHarmonic,
     fibonacci_points,
     fibonacci_weight,
+    fourier,
     gauss_legendre_fourier_points,
     gauss_legendre_fourier_weights,
-    fourier,
     geodesic_cos,
 )
+from hookeanity.base import Real, instance
+from scipy.special import legendre, sph_legendre_p
 
 
 def test_fourier():

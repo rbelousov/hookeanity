@@ -2,36 +2,34 @@
 
 Attributes:
     DIM (int): Number of spatial dimensions.
-    TypeHint (typing.TypeVar): Type variable for hints.
-    Real (typing.TypeAlias): Native python or numpy floating-point number.
-    Point (typing.TypeAlias): Point coordinates in 3D.
-    Grid (typing.TypeAlias): Grid of 3D point coordinates.
-    ScalarField (typing.TypeAlias): Scalar field defined over a grid.
-    VectorField (typing.TypeAlias): Vector field defined over a grid.
-    ScalarValues (typing.TypeAlias): Scalar values on a mesh.
-    VectorValues (typing.TypeAlias): Vector values on a mesh.
+    Real: Native Python or NumPy floating-point number.
+    Point: Point coordinates in 3D.
+    Grid: Grid of 3D point coordinates.
+    ScalarField: Scalar field defined over a grid.
+    VectorField: Vector field defined over a grid.
+    ScalarValues: Scalar values on a mesh.
+    VectorValues: Vector values on a mesh.
 """
 
-from typing import Any, TypeAlias, TypeVar
-from typing_extensions import TypeForm, TypeIs
 from collections.abc import Callable
-from typeguard import check_type, TypeCheckError
-from jaxtyping import Float
-import numpy as np
+from typing import Any, TypeIs
 
+import numpy as np
+from jaxtyping import Float
+from typeguard import TypeCheckError, check_type
+from typing_extensions import TypeForm
 
 DIM = 3
-TypeHint = TypeVar("TypeHint")
-Real: TypeAlias = float | np.floating
-Point: TypeAlias = Float[np.ndarray, "coordinates"]  # noqa: F722, F821
-Grid: TypeAlias = Float[np.ndarray, "points coordinates"]  # noqa: F722, F821
-ScalarValues: TypeAlias = Float[np.ndarray, "points"]  # noqa: F722, F821
-VectorValues: TypeAlias = Float[np.ndarray, "points components"]  # noqa: F722, F821
-ScalarField: TypeAlias = Callable[[Point | Grid], Real | ScalarValues]
-VectorField: TypeAlias = Callable[[Point | Grid], Point | VectorValues]
+type Real = float | np.floating
+type Point = Float[np.ndarray, "coordinates"]  # noqa: F821
+type Grid = Float[np.ndarray, "points coordinates"]
+type ScalarValues = Float[np.ndarray, "points"]  # noqa: F821
+type VectorValues = Float[np.ndarray, "points components"]
+type ScalarField = Callable[[Point | Grid], Real | ScalarValues]
+type VectorField = Callable[[Point | Grid], Point | VectorValues]
 
 
-def instance(arg: Any, hint: TypeForm[TypeHint] | Any) -> TypeIs[TypeHint]:
+def instance[TypeHint](arg: Any, hint: TypeForm[TypeHint] | Any) -> TypeIs[TypeHint]:
     """Check if a variable is an instance of the given type hint.
 
     Current implementation is restricted to acceptable `Type` hints.

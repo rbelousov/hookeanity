@@ -1,4 +1,4 @@
-"""Exact Ornstein–Uhlenbeck evolution of the bulk-reduced elastic sphere."""
+"""Exact body-frame OU increments with per-step co-rotating orientation updates."""
 
 import json
 from pathlib import Path
@@ -8,10 +8,12 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 from scipy.linalg import expm
+from scipy.spatial.transform import Rotation
 
 from . import h5
 from .base import DIM, Real, VectorValues, instance
-from .system import AndularGrid, Init, Seed, System as SpatialSystem, cast_init
+from .system import AndularGrid, Seed
+from .system import System as SpatialSystem
 
 
 def _transition_moments(
@@ -74,7 +76,7 @@ def _covariance_factor(covariance: np.ndarray) -> np.ndarray:
 
 
 class System(SpatialSystem):
-    """Elastic sphere with an exact, precomputed Gaussian transition."""
+    """Elastic sphere with exact body-frame OU draws and finite rotation steps."""
 
     def __init__(
         self,
@@ -92,7 +94,7 @@ class System(SpatialSystem):
         verbose: bool = False,
         cache: str | Path | None = None,
         lmax: int | None = None,
-        init: Init = "no_rigid_motion",
+        rotation: NDArray[np.floating] | None = None,
     ):
         """Initialize the spatial model and its exact transition.
 
@@ -111,7 +113,7 @@ class System(SpatialSystem):
             verbose: Enable initialization logging.
             cache: Optional spatial operator cache.
             lmax: Spherical-harmonic expansion cutoff, or automatic selection.
-            init: Rigid-mode correction of the reduced elastic operator.
+            rotation: Body-to-lab orientation matrix; defaults to identity.
 
         Raises:
             ValueError: For invalid parameters, state, or bulk reduction.
@@ -119,8 +121,7 @@ class System(SpatialSystem):
         """
         if angular_grid not in {"fibonacci", "gauss-legendre-fourier"}:
             raise ValueError(f"Unknown angular grid: {angular_grid!r}.")
-        if init not in {"no_rigid_motion", "no_translations", "no_rotations", None}:
-            raise ValueError(f"Unknown init option: {init!r}.")
+        self._rotation = self._validated_rotation(rotation)
 
         self._resolution = (int(resolution[0]), int(resolution[1]))
         self._angular_grid = angular_grid
@@ -132,7 +133,6 @@ class System(SpatialSystem):
         self._kbt = float(kbt)
         self._gamma = float(gamma)
         self._lmax = None if lmax is None else int(lmax)
-        self._init = init
         parameters = [
             self._lam,
             self._mu,
@@ -156,6 +156,7 @@ class System(SpatialSystem):
         self.info("Initializing exact OU system")
         if cache is None:
             self._build_operators()
+            self._build_rotation_projection()
             self._build_transition()
         else:
             self.load_cache(cache)
@@ -174,7 +175,7 @@ class System(SpatialSystem):
         """Validate the reduced drift and refresh all time-dependent operators."""
         if not np.isfinite(self._trac_red).all() or not np.isfinite(self._force).all():
             raise ValueError("Surface traction and force must be finite")
-        max_eigenvalue = np.linalg.eigvals(self._trac_red).real.max()
+        max_eigenvalue = np.real(np.linalg.eigvals(self._trac_red)).max()
         assert max_eigenvalue <= 1e-12, (
             f"Unstable mode detected ({max_eigenvalue:.3e}): increase lmax parameter"
         )
@@ -191,26 +192,52 @@ class System(SpatialSystem):
             else np.zeros_like(self._covariance)
         )
 
+        # The force is specified in lab coordinates. Integrate the response to
+        # each lab-to-body matrix entry once, then combine at the step's start.
+        force = self._force.reshape(-1, DIM)
+        basis = np.zeros((self.nsurf, DIM * DIM))
+        for lab_axis in range(DIM):
+            for body_axis in range(DIM):
+                basis[body_axis::DIM, DIM * lab_axis + body_axis] = (
+                    force[:, lab_axis] / self._gamma
+                )
+        if self._dt == 0:
+            self._force_response = np.zeros_like(basis)
+        else:
+            augmented = np.zeros((self.nsurf + DIM * DIM, self.nsurf + DIM * DIM))
+            augmented[: self.nsurf, : self.nsurf] = self._trac_red / self._gamma
+            augmented[: self.nsurf, self.nsurf :] = basis
+            self._force_response = expm(augmented * self._dt)[
+                : self.nsurf, self.nsurf :
+            ]
+
     def __call__(self) -> Self:
-        """Draw the exact next surface state and reconstruct bulk equilibrium."""
+        """Draw one frozen-frame OU step and compose its stochastic rotation."""
         if self._dt == 0:
             return self
-        surf = self._transition @ self._surface_state() + self._mean
+        surf = (
+            self._transition @ self._surface_state()
+            + self._force_response @ self._rotation.ravel()
+        )
         if self._kbt > 0:
-            surf = surf + self._noise_factor @ self._rng.normal(size=self.nsurf)
+            noise = self._noise_factor @ self._rng.normal(size=self.nsurf)
+            internal_noise, omega = self._split_noise(noise)
+            surf += internal_noise
+            self._rotation = self._rotation @ Rotation.from_rotvec(omega).as_matrix()
         self._state = self._reconstruct_state(surf)
         return self
 
     def load_cache(self, filepath: str | Path) -> Self:
         """Load compatible spatial operators and rebuild the exact transition."""
         super().load_cache(filepath)
+        self._build_rotation_projection()
         self._build_transition()
         return self
 
     def save(self, filepath: str | Path) -> Self:
         """Save full displacements, physical parameters, and RNG state to HDF5.
 
-        The checkpoint contains no integration-method metadata.
+        The checkpoint contains the body-frame state and its lab orientation.
         """
 
         def json_default(obj):
@@ -225,6 +252,7 @@ class System(SpatialSystem):
         with h5py.File(filepath, "w") as f:
             f.create_dataset("points", data=self._grid, compression="lzf", shuffle=True)
             f.create_dataset("state", data=self._state, compression="lzf", shuffle=True)
+            f.create_dataset("rotation", data=self._rotation)
             f.attrs.update(
                 {
                     "resolution": self._resolution,
@@ -235,7 +263,6 @@ class System(SpatialSystem):
                     "f_ext": self._ext,
                     "f_loc": self._loc,
                     "lmax": h5.optional_nnint(self._lmax),
-                    "init": "none" if self._init is None else self._init,
                     "kT": self._kbt,
                     "angular_grid": self._angular_grid,
                     "rng_bit_generator": type(self._rng.bit_generator).__name__,
@@ -255,7 +282,7 @@ class System(SpatialSystem):
     ) -> Self:
         """Load a checkpoint.
 
-        Legacy ``system.System`` checkpoints are accepted; their method metadata
+        Current ``system.System`` checkpoints are accepted; their method metadata
         is ignored. An optional spatial cache avoids rebuilding spatial operators.
         """
 
@@ -276,10 +303,12 @@ class System(SpatialSystem):
         with h5py.File(filepath, "r") as f:
             name = decode_text(h5.attr_any(f, "rng_bit_generator"))
             bitgen_cls = getattr(np.random, name, None)
+            if bitgen_cls is None:
+                raise ValueError(f"Unknown NumPy bit generator: {name!r}")
             if not isinstance(bitgen_cls, type) or not issubclass(
                 bitgen_cls, np.random.BitGenerator
             ):
-                raise ValueError(f"Unknown NumPy bit generator: {name!r}")
+                raise TypeError(f"Invalid NumPy bit generator: {name!r}")
             bitgen = bitgen_cls()
             bitgen.state = restore_rng(
                 json.loads(decode_text(h5.attr_any(f, "rng_state_json")))
@@ -301,5 +330,5 @@ class System(SpatialSystem):
                 verbose=verbose,
                 cache=cache,
                 lmax=h5.attr_optional_nnint(f, "lmax"),
-                init=cast_init(decode_text(h5.attr_any(f, "init"))),
+                rotation=h5.dataset_ndfloat(f, "rotation"),
             )

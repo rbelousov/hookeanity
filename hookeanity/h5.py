@@ -1,17 +1,18 @@
 """HDF5 utility functions.
 
 Attributes:
-    IntPair (typing.TypeAlias): Pair of integers.
-    FloatPair (typing.TypeAlias): Pair of floating-point numbers.
+    IntPair: Pair of integers.
+    FloatPair: Pair of floating-point numbers.
 """
 
-from typing import cast, Any, TypeAlias
+from typing import Any, cast
+
 import h5py
 import numpy as np
 from numpy.typing import NDArray
 
-IntPair: TypeAlias = tuple[int, int]
-FloatPair: TypeAlias = tuple[float, float]
+type IntPair = tuple[int, int]
+type FloatPair = tuple[float, float]
 
 
 def attr_any(file: h5py.File, key: str) -> Any:

@@ -1,9 +1,11 @@
 """Numerical methods for functions of the radial component in spherical coordinates."""
 
 from typing import cast
+
 import numpy as np
-from numpy.typing import NDArray, ArrayLike
-from scipy.special import gamma, eval_jacobi
+from numpy.typing import ArrayLike, NDArray
+from scipy.special import eval_jacobi, gamma
+
 from .base import Real, instance
 
 
