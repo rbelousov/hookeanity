@@ -597,7 +597,7 @@ class System:
             dt = h5.attr_float(f, "dt")
             f_ext = h5.attr_float(f, "f_ext")
             f_loc = h5.attr_float_pair(f, "f_loc")
-            lmax = h5.attr_int(f, "lmax")
+            lmax = h5.attr_optional_nnint(f, "lmax")
             init = cast_init(h5.attr_any(f, "init"))
             kbt = h5.attr_float(f, "kT")
             method = cast(IntegrationMethod, decode_text(h5.attr_any(f, "method")))
@@ -706,7 +706,7 @@ class System:
             dt = h5.attr_float(f, "dt")
             f_ext = h5.attr_float(f, "f_ext")
             f_loc = h5.attr_float_pair(f, "f_loc")
-            lmax = h5.attr_int(f, "lmax")
+            lmax = h5.attr_optional_nnint(f, "lmax")
             angular_grid = h5.attr_any(f, "angular_grid")
             init = cast_init(h5.attr_any(f, "init"))
 
@@ -834,7 +834,7 @@ class System:
             cache_resolution = h5.attr_int_pair(f, "resolution")
             cache_mesh = h5.attr_int_pair(f, "mesh")
             cache_vts_resolution = h5.attr_int(f, "vts_resolution")
-            cache_lmax = h5.attr_int(f, "lmax")
+            cache_lmax = h5.attr_optional_nnint(f, "lmax")
             cache_angular_grid = h5.attr_any(f, "angular_grid")
 
             assert cache_resolution == self._resolution, (

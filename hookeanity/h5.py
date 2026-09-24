@@ -103,6 +103,14 @@ def optional_nnint(value: int | None) -> int:
     return -1 if value is None else int(value)
 
 
+def attr_optional_nnint(file: h5py.File, key: str) -> int | None:
+    """Read an optional nonnegative integer, decoding the ``-1`` sentinel."""
+    value = attr_int(file, key)
+    if value < -1:
+        raise ValueError(f"Expected {key} to be nonnegative or -1, got {value}")
+    return None if value == -1 else value
+
+
 def dataset_ndfloat(file: h5py.File, key: str) -> NDArray[np.floating]:
     """Load numpy array of floating-point numbers from an HDF5 file handle.
 
