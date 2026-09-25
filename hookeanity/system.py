@@ -143,12 +143,13 @@ class System:
             if state is None
             else np.asarray(state, dtype=float).copy()
         )
-        if (
-            self._state.shape != (self.npoints, DIM)
-            or not np.isfinite(self._state).all()
-        ):
+        if self._state.shape != (self.npoints, DIM) or not np.isfinite(
+            self._state
+        ).all():
             raise ValueError("state must be a finite (npoints, 3) array")
-        initial_shift = np.average(self._state, axis=0, weights=self._volume_weights)
+        initial_shift = np.average(
+            self._state, axis=0, weights=self._volume_weights
+        )
         self._state -= initial_shift
         self._translation += self._rotation @ initial_shift
 
@@ -249,10 +250,7 @@ class System:
 
         # Additive forces
         self.info("  additive forces")
-        # Scalar magnitude is accepted and interpreted as a force along the z-axis.
         direction = np.asarray(self._ext, dtype=float)
-        if direction.ndim == 0:
-            direction = np.array([0.0, 0.0, float(direction)])
         values = np.array(
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
@@ -424,8 +422,7 @@ class System:
         # The exact OU subclass keeps its original body-frame state contract.
         translation = getattr(self, "_translation", np.zeros(DIM))
         points = (
-            self._center
-            + (reference + displacement - self._center) @ self._rotation.T
+            self._center + (reference + displacement - self._center) @ self._rotation.T
             + translation
         )
         return points, points - reference
