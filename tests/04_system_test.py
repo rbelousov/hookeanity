@@ -73,6 +73,44 @@ def test_system_init(angular_grid, resolution, npoints, lmax):
     sys = System(resolution, 1.0, 1.0, 1e-2, lmax=lmax, angular_grid=angular_grid)
     assert sys._state.shape == (npoints, DIM)
     assert np.all(sys._state == 0)
+    assert sys.translation() == pytest.approx(0)
+    assert sys._ext == pytest.approx(0)
+
+
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_initial_translation(angular_grid, resolution, npoints, lmax):
+    """Extract the full-body mean of an initial body-frame displacement."""
+    state = np.random.default_rng(8).normal(size=(npoints, DIM)) * 1e-3
+    offset = np.array([0.1, -0.2, 0.3])
+    rotation = Rotation.from_rotvec([0.2, -0.1, 0.3]).as_matrix()
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        state=state,
+        rotation=rotation,
+        translation=offset,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
+    mean = np.average(state, axis=0, weights=sys._volume_weights)
+    assert sys.state() == pytest.approx(state - mean)
+    assert sys.translation() == pytest.approx(offset + rotation @ mean)
+    assert np.average(
+        sys.state(), axis=0, weights=sys._volume_weights
+    ) == pytest.approx(0)
+    copied = sys.translation()
+    copied[:] = 0
+    assert sys.translation() == pytest.approx(offset + rotation @ mean)
+
+
+@pytest.mark.parametrize("name", ["f_ext", "translation"])
+@pytest.mark.parametrize("invalid", [1.0, (1.0, 2.0), (1.0, np.inf, 3.0)])
+def test_vector_validation(name, invalid):
+    """Reject non-Cartesian or nonfinite force and translation inputs."""
+    with pytest.raises(ValueError, match=name):
+        System((5, 12), 1.0, 1.0, 1e-2, lmax=5, **{name: invalid})
 
 
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
@@ -81,11 +119,12 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     filepath = tmp_path / "system.h5"
 
     lam, mu, dt = 2.25, 2.0, 1e-2
-    gamma, f_ext = 2.5, 0.5
+    gamma, f_ext = 2.5, (0.2, -0.3, 0.5)
     f_loc = (0.7, 1.2)
     kbt = 1.5
     method = "trotter"
     rotation = Rotation.from_rotvec([0.1, -0.2, 0.3]).as_matrix()
+    translation = np.array([0.4, -0.2, 0.1])
 
     state = np.random.default_rng(0).uniform(low=-1e-3, high=1e-3, size=(npoints, DIM))
 
@@ -104,9 +143,13 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
         lmax=lmax,
         angular_grid=angular_grid,
         rotation=rotation,
+        translation=translation,
     )
 
     system.save(filepath)
+    with h5py.File(filepath, "r") as f:
+        assert np.asarray(f.attrs["f_ext"]) == pytest.approx(f_ext)
+        assert np.asarray(f["translation"]) == pytest.approx(system.translation())
     sample1 = system._rng.random(5)
 
     assert system.resolution == resolution
@@ -123,18 +166,26 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     assert loaded._mu == mu
     assert loaded._dt == dt
     assert loaded._gamma == gamma
-    assert loaded._ext == f_ext
+    assert loaded._ext == pytest.approx(f_ext)
     assert loaded._loc == f_loc
     assert loaded._kbt == kbt
     assert loaded.lmax == lmax
     assert loaded._method == method
-    assert loaded._state == pytest.approx(state)
+    shift = np.average(state, axis=0, weights=system._volume_weights)
+    assert loaded._state == pytest.approx(state - shift)
     assert loaded.rotation() == pytest.approx(rotation)
+    assert loaded.translation() == pytest.approx(translation + rotation @ shift)
     assert np.all(sample1 == sample2)
     system()
     loaded()
     assert loaded.state() == pytest.approx(system.state())
     assert loaded.rotation() == pytest.approx(system.rotation())
+    assert loaded.translation() == pytest.approx(system.translation())
+
+    with h5py.File(filepath, "r+") as f:
+        del f["translation"]
+    with pytest.raises(KeyError):
+        System.load(filepath)
 
 
 def test_stress_divergence(system):
@@ -219,7 +270,8 @@ def test_system_smoke(system_zero_state):
     sys._state += 1
     assert np.all(sys._state == 1)
     assert sys()._state.shape == (system_zero_state.npoints, DIM)
-    assert sys._state == pytest.approx(1, abs=1e-3)
+    assert sys._state == pytest.approx(0, abs=1e-3)
+    assert sys.translation() == pytest.approx(np.ones(DIM), abs=1e-3)
 
     sys = System(
         system_zero_state.resolution,
@@ -237,7 +289,7 @@ def test_system_smoke(system_zero_state):
         1.0,
         1.0,
         1e-2,
-        f_ext=10,
+        f_ext=(0.0, 0.0, 10.0),
         f_loc=(0, 0),
         kbt=0.0,
         lmax=system_zero_state.lmax,
@@ -247,7 +299,7 @@ def test_system_smoke(system_zero_state):
         1.0,
         1.0,
         1e-2,
-        f_ext=10,
+        f_ext=(0.0, 0.0, 10.0),
         f_loc=(np.pi, 0),
         kbt=0.0,
         lmax=system_zero_state.lmax,
@@ -262,7 +314,7 @@ def test_system_smoke(system_zero_state):
         1.0,
         1.0,
         1e-2,
-        f_ext=10,
+        f_ext=(0.0, 0.0, 10.0),
         f_loc=(np.pi, 0),
         kbt=0.0,
         method="trotter",
@@ -276,7 +328,7 @@ def test_system_smoke(system_zero_state):
         1.0,
         1.0,
         1e-2,
-        f_ext=10,
+        f_ext=(0.0, 0.0, 10.0),
         f_loc=(0, 0),
         kbt=0.0,
         method="strang",
@@ -298,6 +350,20 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
         lmax=lmax,
         angular_grid=angular_grid,
     )
+    sys1.save_cache(cache)
+
+    with h5py.File(cache, "r+") as f:
+        f.attrs["f_ext"] = 0.0
+    with pytest.raises(AssertionError, match="force vectors"):
+        System(
+            resolution,
+            2.0,
+            2.0,
+            1e-2,
+            lmax=lmax,
+            cache=cache,
+            angular_grid=angular_grid,
+        )
     sys1.save_cache(cache)
     sys2 = System(
         resolution,
@@ -410,7 +476,7 @@ def _build_operators_old(
     mesh: tuple[int, int],
     lam: float,
     mu: float,
-    f_ext: float,
+    f_ext: tuple[float, float, float],
     f_loc: tuple[float, float],
     angular_grid: str,
     lmax: int,
@@ -474,10 +540,8 @@ def _build_operators_old(
     ela = (mu + lam) * gd + mu * vl
 
     # Additive forces
-    force = np.zeros((mesh[1], DIM))
-    force[:, 2] = f_ext * np.array(
-        [chi(np.array(f_loc)) for chi in inter._angular_functions]
-    )
+    values = np.array([chi(np.array(f_loc)) for chi in inter._angular_functions])
+    force = values[:, None] * np.asarray(f_ext)[None, :]
     force = force.ravel()
 
     return trac, ela, force
@@ -489,7 +553,7 @@ def test_build_operators(angular_grid, resolution, npoints, lmax):
     lam = 2.0
     mu = 2.0
     dt = 1e-2
-    f_ext = 0.5
+    f_ext = (0.2, -0.3, 0.5)
     f_loc = (0.7, 1.2)
 
     sys = System(
@@ -531,7 +595,7 @@ def test_bulk_reconstruction(angular_grid, resolution, npoints, lmax):
         2.0,
         2.0,
         1e-2,
-        f_ext=0.5,
+        f_ext=(0.0, 0.0, 0.5),
         f_loc=(0.7, 1.2),
         kbt=0.0,
         angular_grid=angular_grid,
@@ -555,7 +619,7 @@ def test_surface_reduction(angular_grid, resolution, npoints, lmax):
         2.0,
         2.0,
         1e-2,
-        f_ext=0.5,
+        f_ext=(0.0, 0.0, 0.5),
         f_loc=(0.7, 1.2),
         kbt=0.0,
         angular_grid=angular_grid,
@@ -603,13 +667,65 @@ def test_rotation_projection(angular_grid, resolution, npoints, lmax):
     assert overlap == pytest.approx(0, abs=1e-10)
     assert noise == pytest.approx(internal + sys._surface_rotation_modes @ extracted)
 
+    internal, shift, omega = sys._split_rigid(noise)
+    rigid = sys._surface_rigid_fit_modes @ np.r_[shift, omega]
+    assert noise == pytest.approx(internal + rigid)
+    residual = sys._reconstruct_state(internal)
+    assert np.einsum("p,pa->a", sys._volume_weights, residual) == pytest.approx(
+        0, abs=1e-10
+    )
+    overlap = np.einsum("p,pai,pa->i", sys._volume_weights, modes, residual)
+    assert overlap == pytest.approx(0, abs=1e-10)
+
+
+@pytest.mark.parametrize("method", ["euler", "trotter", "strang"])
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_pure_translational_noise_step(
+    method, angular_grid, resolution, npoints, lmax, monkeypatch
+):
+    """A rigid noise translation moves the frame, not the deformation."""
+    start = Rotation.from_rotvec([0.2, -0.1, 0.3]).as_matrix()
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.4,
+        lmax=lmax,
+        angular_grid=angular_grid,
+        method=method,
+        rotation=start,
+    )
+    shift = np.array([0.01, -0.02, 0.03])
+    normal = sys._surface_rigid_fit_modes[:, :DIM] @ shift / sys._std
+
+    class FixedNoise:
+        def normal(self, size):
+            assert size == sys.nsurf
+            return normal
+
+    monkeypatch.setattr(sys, "_rng", FixedNoise())
+    sys()
+    assert sys.state() == pytest.approx(0, abs=1e-11)
+    assert sys.translation() == pytest.approx(start @ shift, abs=1e-11)
+    assert sys.rotation() == pytest.approx(start, abs=1e-11)
+
 
 @pytest.mark.parametrize("method", ["euler", "trotter", "strang"])
 def test_rotation_steps(method):
-    """Each integrator composes the fitted noise as finite SO(3) rotations."""
+    """Each integrator composes deterministic and noisy rigid increments."""
     start = Rotation.from_rotvec([0.2, 0.1, -0.1]).as_matrix()
     sys = System(
-        (5, 12), 1.0, 1.0, 1e-2, kbt=0.4, lmax=5, method=method, rng=123, rotation=start
+        (5, 12),
+        1.0,
+        1.0,
+        1e-2,
+        kbt=0.4,
+        lmax=5,
+        method=method,
+        rng=123,
+        rotation=start,
+        f_ext=(0.3, -0.2, 0.1),
     )
     assert sys.rotation() == pytest.approx(start)
     copied = sys.rotation()
@@ -617,14 +733,32 @@ def test_rotation_steps(method):
     assert sys.rotation() == pytest.approx(start)
     random = np.random.default_rng(123)
     expected = start.copy()
+    expected_translation = np.zeros(DIM)
     for _ in range(3):
+        surf = sys._surface_state()
+        if method == "euler":
+            deterministic = surf + (sys._trac_red @ surf + sys._body_force()) * sys._tf
+        elif method == "trotter":
+            deterministic = (
+                expm_multiply(sys._trac_oper, surf, traceA=sys._trace)
+                + sys._body_force() * sys._tf
+            )
+        else:
+            half = expm_multiply(sys._trac_oper, surf, traceA=sys._trace)
+            deterministic = expm_multiply(
+                sys._trac_oper,
+                half + sys._body_force() * sys._tf,
+                traceA=sys._trace,
+            )
         noise = sys._std * random.normal(size=sys.nsurf)
         if method == "strang":
             noise = expm_multiply(sys._trac_oper, noise, traceA=sys._trace)
-        omega = sys._rotation_fit @ noise
-        expected = expected @ Rotation.from_rotvec(omega).as_matrix()
+        motion = sys._rigid_fit @ (deterministic + noise)
+        expected_translation += expected @ motion[:DIM]
+        expected = expected @ Rotation.from_rotvec(motion[DIM:]).as_matrix()
         sys()
     assert sys.rotation() == pytest.approx(expected)
+    assert sys.translation() == pytest.approx(expected_translation)
     assert sys.rotation().T @ sys.rotation() == pytest.approx(np.eye(DIM), abs=1e-12)
     assert np.linalg.det(sys.rotation()) == pytest.approx(1)
 
@@ -656,6 +790,7 @@ def test_pure_rotational_noise_step(
     monkeypatch.setattr(sys, "_rng", FixedNoise())
     sys()
     assert sys.state() == pytest.approx(0, abs=1e-11)
+    assert sys.translation() == pytest.approx(0, abs=1e-11)
     assert sys.rotation() == pytest.approx(Rotation.from_rotvec(omega).as_matrix())
 
 
@@ -665,12 +800,70 @@ def test_rotation_validation_and_lab_force():
         with pytest.raises(ValueError, match="SO\\(3\\)"):
             System((5, 12), 1.0, 1.0, 0.01, lmax=5, rotation=invalid)
     rotation = Rotation.from_rotvec([0, np.pi / 2, 0]).as_matrix()
-    sys = System((5, 12), 1.0, 1.0, 0.01, lmax=5, kbt=0.0, f_ext=1.0, rotation=rotation)
+    sys = System(
+        (5, 12),
+        1.0,
+        1.0,
+        0.01,
+        lmax=5,
+        kbt=0.0,
+        f_ext=(0.2, -0.3, 1.0),
+        rotation=rotation,
+    )
     assert sys._body_force().reshape(-1, DIM) == pytest.approx(
         sys._force.reshape(-1, DIM) @ rotation
     )
     sys()
-    assert sys.rotation() == pytest.approx(rotation)
+    assert sys.rotation().T @ sys.rotation() == pytest.approx(np.eye(DIM))
+
+
+@pytest.mark.parametrize("method", ["euler", "trotter", "strang"])
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+def test_tangential_force_rotates_frame(
+    method, angular_grid, resolution, npoints, lmax
+):
+    """A lab-fixed tangential force has finite translation and rotation effects."""
+    start = Rotation.from_rotvec([0.2, -0.1, 0.3]).as_matrix()
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        f_ext=(1.0, 0.0, 0.0),
+        kbt=0.0,
+        method=method,
+        angular_grid=angular_grid,
+        lmax=lmax,
+        rotation=start,
+    )
+    assert sys._body_force().reshape(-1, DIM) == pytest.approx(
+        sys._force.reshape(-1, DIM) @ start
+    )
+    force_step = sys._body_force() * sys._tf
+    if method == "strang":
+        force_step = expm_multiply(sys._trac_oper, force_step, traceA=sys._trace)
+    expected_internal, shift, omega = sys._split_rigid(force_step)
+    assert np.linalg.norm(omega) > 1e-8
+    sys()
+    assert sys.state() == pytest.approx(sys._reconstruct_state(expected_internal))
+    assert sys.translation() == pytest.approx(start @ shift)
+    assert sys.rotation() == pytest.approx(
+        start @ Rotation.from_rotvec(omega).as_matrix()
+    )
+    assert sys._body_force().reshape(-1, DIM) == pytest.approx(
+        sys._force.reshape(-1, DIM) @ sys.rotation()
+    )
+    residual = sys.state()
+    centered = sys._reference_xyz - sys._center
+    modes = np.stack(
+        [np.cross(np.eye(DIM)[axis], centered) for axis in range(DIM)], axis=-1
+    )
+    assert np.einsum("p,pa->a", sys._volume_weights, residual) == pytest.approx(
+        0, abs=1e-10
+    )
+    assert np.einsum(
+        "p,pai,pa->i", sys._volume_weights, modes, residual
+    ) == pytest.approx(0, abs=1e-10)
 
 
 def _vtk_array(root: ET.Element, name: str | None) -> np.ndarray:
@@ -747,7 +940,11 @@ def test_export_vts(tmp_path, angular_grid, resolution, npoints, lmax):
         np.column_stack((np.full(len(tg.ravel()), radius), tg.ravel(), pg.ravel()))
     )
     internal = sys._build_vts_projection(dense_resolution) @ sys.surface()
-    expected_points = sys._center + (reference + internal - sys._center) @ rotation.T
+    expected_points = (
+        sys._center
+        + (reference + internal - sys._center) @ rotation.T
+        + sys.translation()
+    )
     assert points == pytest.approx(expected_points)
     assert displacement == pytest.approx(points - reference)
 
@@ -830,7 +1027,11 @@ def test_export_vtp(tmp_path, angular_grid, resolution, npoints, lmax):
     offsets = _vtk_array(root, "offsets").astype(int)
 
     reference = _surface_points_cartesian(sys)
-    expected = sys._center + (reference + sys.surface() - sys._center) @ rotation.T
+    expected = (
+        sys._center
+        + (reference + sys.surface() - sys._center) @ rotation.T
+        + sys.translation()
+    )
     assert points == pytest.approx(expected)
     assert displacement == pytest.approx(points - reference)
     assert magnitude == pytest.approx(np.linalg.norm(displacement, axis=1))

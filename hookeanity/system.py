@@ -37,7 +37,7 @@ class System:
         _lam (float): Lamé lambda coefficient.
         _mu (float): Lamé mu coefficient.
         _dt (float): Integration time step
-        _ext (float): Magnitude of the external point force.
+        _ext (numpy.ndarray): Lab-frame external point-force vector.
         _loc (tuple[float, float]): Solid angle specifying the location of the external point force.
         _lmax (int | None): Order of the spherical-harmonic expansion of the Sobolev-Matérn kernels.
         _kbt (float): Temperature.
@@ -45,6 +45,7 @@ class System:
         verbose (bool): Trigger of logging output.
         _state (hookeanity.VectorValues): Internal displacements in body coordinates.
         _rotation (numpy.ndarray): Body-to-lab orientation in SO(3).
+        _translation (numpy.ndarray): Global lab-frame translation.
         _volume_weights (numpy.ndarray): Full-grid volume quadrature weights.
         _tf (float): Time step normalized by the dissipative coefficient.
         _method (hookeanity.system.IntegrationMethod): Time-integration method.
@@ -65,7 +66,7 @@ class System:
         lam: Real,
         mu: Real,
         dt: Real,
-        f_ext: Real = 0.0,
+        f_ext: tuple[Real, Real, Real] | NDArray[np.floating] = (0.0, 0.0, 0.0),
         f_loc: tuple[Real, Real] = (0.0, 0.0),
         kbt: Real = 1.0,
         gamma: Real = 1.0,
@@ -77,6 +78,7 @@ class System:
         cache: str | Path | None = None,
         lmax: int | None = None,
         rotation: NDArray[np.floating] | None = None,
+        translation: NDArray[np.floating] | tuple[Real, Real, Real] | None = None,
     ):
         """Initialize the simulation system.
 
@@ -85,7 +87,7 @@ class System:
             lam: Lamé's first parameter.
             mu: Lamé's second parameter (shear modulus).
             dt: Integration time step.
-            f_ext: Magnitude of the external force defaults to zero.
+            f_ext: Three-component lab-frame force vector; defaults to zero.
             f_loc: Solid angle specifying the location of the external point force.
             kbt: Effective temperature in units of energy defaults to one.
             gamma: Effective dissipative coefficient.
@@ -97,6 +99,7 @@ class System:
             cache: Path to the cached numerical data.
             lmax: Order of the spherical-harmonic expansion of the Sobolev-Matérn kernels.
             rotation: Body-to-lab orientation matrix; defaults to identity.
+            translation: Global lab-frame translation; defaults to zero.
 
         Raises:
             ValueError: On unknown integration method.
@@ -107,6 +110,7 @@ class System:
         if angular_grid not in {"fibonacci", "gauss-legendre-fourier"}:
             raise ValueError(f"Unknown angular grid: {angular_grid!r}.")
         self._rotation = self._validated_rotation(rotation)
+        self._translation = self._validated_vector(translation, "translation")
 
         self._resolution = (int(resolution[0]), int(resolution[1]))
         self._angular_grid = angular_grid
@@ -114,7 +118,7 @@ class System:
         self._lam = float(lam)
         self._mu = float(mu)
         self._dt = float(dt)
-        self._ext = float(f_ext)
+        self._ext = self._validated_vector(f_ext, "f_ext")
         self._loc = (float(f_loc[0]), float(f_loc[1]))
         self._lmax = None if lmax is None else int(lmax)
         self._kbt = float(kbt)
@@ -135,8 +139,18 @@ class System:
             self.load_cache(cache)
         self._build_rotation_projection()
         self._state = (
-            np.zeros((np.prod(self._mesh), DIM)) if state is None else np.array(state)
+            np.zeros((self.npoints, DIM), dtype=float)
+            if state is None
+            else np.asarray(state, dtype=float).copy()
         )
+        if (
+            self._state.shape != (self.npoints, DIM)
+            or not np.isfinite(self._state).all()
+        ):
+            raise ValueError("state must be a finite (npoints, 3) array")
+        initial_shift = np.average(self._state, axis=0, weights=self._volume_weights)
+        self._state -= initial_shift
+        self._translation += self._rotation @ initial_shift
 
         self._tf = dt / gamma
         if self._method == "trotter":
@@ -235,10 +249,14 @@ class System:
 
         # Additive forces
         self.info("  additive forces")
-        force = np.zeros((self.mesh[1], DIM))
-        force[:, 2] = (self._ext) * np.array(
+        # Scalar magnitude is accepted and interpreted as a force along the z-axis.
+        direction = np.asarray(self._ext, dtype=float)
+        if direction.ndim == 0:
+            direction = np.array([0.0, 0.0, float(direction)])
+        values = np.array(
             [chi(np.array(self._loc)) for chi in inter._angular_functions]
         )
+        force = values[:, None] * direction[None, :]
         self._force = force.ravel()
         self._build_surface_reduction()
 
@@ -335,8 +353,18 @@ class System:
             raise ValueError("rotation must be a finite SO(3) matrix")
         return result.copy()
 
+    @staticmethod
+    def _validated_vector(
+        value: NDArray[np.floating] | tuple[Real, Real, Real] | None, name: str
+    ) -> NDArray[np.floating]:
+        """Return an independent finite Cartesian vector."""
+        result = np.zeros(DIM) if value is None else np.asarray(value, dtype=float)
+        if result.shape != (DIM,) or not np.isfinite(result).all():
+            raise ValueError(f"{name} must be a finite three-component vector")
+        return result.copy()
+
     def _build_rotation_projection(self) -> None:
-        """Fit full-body noise rotations while preserving bulk equilibrium."""
+        """Fit full-body rigid motions while preserving bulk equilibrium."""
         if (
             self._volume_weights.shape != (self.npoints,)
             or not np.isfinite(self._volume_weights).all()
@@ -360,12 +388,30 @@ class System:
         gram = weighted_fit @ self._surface_rotation_modes
         self._rotation_fit = np.linalg.solve(gram, weighted_fit)
 
+        translations = np.broadcast_to(np.eye(DIM), (self.npoints, DIM, DIM))
+        rigid_modes = np.concatenate((translations, modes), axis=2)
+        full_rigid = rigid_modes.reshape(self.ndof, 2 * DIM)
+        self._surface_rigid_fit_modes = full_rigid[-self.nsurf :]
+        rigid_weighted_fit = full_rigid.T @ (
+            self._volume_weights.repeat(DIM)[:, None] * reconstruct
+        )
+        rigid_gram = rigid_weighted_fit @ self._surface_rigid_fit_modes
+        self._rigid_fit = np.linalg.solve(rigid_gram, rigid_weighted_fit)
+
     def _split_noise(
         self, noise: NDArray[np.floating]
     ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         """Return internal surface noise and its finite-frame rotation vector."""
         omega = self._rotation_fit @ noise
         return noise - self._surface_rotation_modes @ omega, omega
+
+    def _split_rigid(
+        self, increment: NDArray[np.floating]
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
+        """Remove weighted full-body translation and rotation from a surface field."""
+        motion = self._rigid_fit @ increment
+        internal = increment - self._surface_rigid_fit_modes @ motion
+        return internal, motion[:DIM], motion[DIM:]
 
     def _body_force(self) -> NDArray[np.floating]:
         """Express the lab-fixed surface force in body coordinates."""
@@ -375,8 +421,12 @@ class System:
         self, reference: NDArray[np.floating], displacement: NDArray[np.floating]
     ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         """Return lab-frame points and displacement from unrotated references."""
+        # The exact OU subclass keeps its original body-frame state contract.
+        translation = getattr(self, "_translation", np.zeros(DIM))
         points = (
-            self._center + (reference + displacement - self._center) @ self._rotation.T
+            self._center
+            + (reference + displacement - self._center) @ self._rotation.T
+            + translation
         )
         return points, points - reference
 
@@ -445,6 +495,10 @@ class System:
         """Return a copy of the body-to-lab orientation."""
         return self._rotation.copy()
 
+    def translation(self) -> NDArray[np.floating]:
+        """Return a copy of the global lab-frame translation."""
+        return self._translation.copy()
+
     def center(self) -> NDArray[np.floating]:
         """Return the volume-weighted reference center used for frame rotation."""
         return self._center.copy()
@@ -464,11 +518,12 @@ class System:
             Updated system after one integration step.
         """
         if self._method == "euler":
-            self._state, omega = self._euler_step()
+            self._state, shift, omega = self._euler_step()
         elif self._method == "strang":
-            self._state, omega = self._strang_step()
+            self._state, shift, omega = self._strang_step()
         else:
-            self._state, omega = self._trotter_step()
+            self._state, shift, omega = self._trotter_step()
+        self._translation += self._rotation @ shift
         self._rotation = self._rotation @ Rotation.from_rotvec(omega).as_matrix()
 
         return self
@@ -489,7 +544,18 @@ class System:
         vec[bulk] = self._bulk_from_surf @ vec[surf]
         return vec
 
-    def _euler_step(self) -> tuple[VectorValues, NDArray[np.floating]]:
+    def _finish_step(
+        self, deterministic: NDArray[np.floating], noise: NDArray[np.floating]
+    ) -> tuple[VectorValues, NDArray[np.floating], NDArray[np.floating]]:
+        """Separate rigid motion from the deterministic and stochastic fields."""
+        internal_det, shift_det, omega_det = self._split_rigid(deterministic)
+        internal_noise, shift_noise, omega_noise = self._split_rigid(noise)
+        state = self._reconstruct_state(internal_det + internal_noise)
+        return state, shift_det + shift_noise, omega_det + omega_noise
+
+    def _euler_step(
+        self,
+    ) -> tuple[VectorValues, NDArray[np.floating], NDArray[np.floating]]:
         """Perform one Euler-Maruyama integration step.
 
         Returns:
@@ -499,9 +565,9 @@ class System:
 
         # Surface step
         traction = self._trac_red @ surf
-        flu, omega = self._split_noise(self._std * self._rng.normal(size=self.nsurf))
-        surf = surf + (traction + self._body_force()) * self._tf + flu
-        return self._reconstruct_state(surf), omega
+        flu = self._std * self._rng.normal(size=self.nsurf)
+        surf = surf + (traction + self._body_force()) * self._tf
+        return self._finish_step(surf, flu)
 
     def _traction_operator(self, tf: Real) -> tuple[LinearOperator, Real]:
         """Construct the traction operator for the exponential integrators.
@@ -536,7 +602,9 @@ class System:
             dtype=float,
         ), trace
 
-    def _trotter_step(self) -> tuple[VectorValues, NDArray[np.floating]]:
+    def _trotter_step(
+        self,
+    ) -> tuple[VectorValues, NDArray[np.floating], NDArray[np.floating]]:
         """Perform one Trotter integration step.
 
         Returns:
@@ -544,11 +612,13 @@ class System:
         """
         surf = self._surface_state()
         surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
-        flu, omega = self._split_noise(self._std * self._rng.normal(size=self.nsurf))
-        surf = surf + flu + self._body_force() * self._tf
-        return self._reconstruct_state(surf), omega
+        flu = self._std * self._rng.normal(size=self.nsurf)
+        surf = surf + self._body_force() * self._tf
+        return self._finish_step(surf, flu)
 
-    def _strang_step(self) -> tuple[VectorValues, NDArray[np.floating]]:
+    def _strang_step(
+        self,
+    ) -> tuple[VectorValues, NDArray[np.floating], NDArray[np.floating]]:
         """Perform one Strang integration step.
 
         Returns:
@@ -561,9 +631,7 @@ class System:
             self._trac_oper, surf + self._body_force() * self._tf, traceA=self._trace
         )
         flu = expm_multiply(self._trac_oper, flu, traceA=self._trace)
-        internal_noise, omega = self._split_noise(flu)
-        surf += internal_noise
-        return self._reconstruct_state(surf), omega
+        return self._finish_step(surf, flu)
 
     def save(self, filepath: str | Path) -> Self:
         """Save a checkpoint into an HDF5 file.
@@ -592,6 +660,7 @@ class System:
             f.create_dataset("points", data=self._grid, compression="lzf", shuffle=True)
             f.create_dataset("state", data=self._state, compression="lzf", shuffle=True)
             f.create_dataset("rotation", data=self._rotation)
+            f.create_dataset("translation", data=self._translation)
 
             # Metadata as attributes
             f.attrs["resolution"] = self._resolution
@@ -599,7 +668,7 @@ class System:
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
             f.attrs["dt"] = float(self._dt)
-            f.attrs["f_ext"] = float(self._ext)
+            f.attrs["f_ext"] = self._ext
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["lmax"] = h5.optional_nnint(self._lmax)
             f.attrs["kT"] = float(self._kbt)
@@ -653,7 +722,7 @@ class System:
             lam = h5.attr_float(f, "lambda")
             mu = h5.attr_float(f, "mu")
             dt = h5.attr_float(f, "dt")
-            f_ext = h5.attr_float(f, "f_ext")
+            f_ext = np.asarray(h5.attr_any(f, "f_ext"), dtype=float)
             f_loc = h5.attr_float_pair(f, "f_loc")
             lmax = h5.attr_optional_nnint(f, "lmax")
             kbt = h5.attr_float(f, "kT")
@@ -665,6 +734,7 @@ class System:
             dset = cast(h5py.Dataset, f["state"])
             state = cast(NDArray[np.floating], dset[()])
             rotation = h5.dataset_ndfloat(f, "rotation")
+            translation = h5.dataset_ndfloat(f, "translation")
 
             bitgen_name = decode_text(h5.attr_any(f, "rng_bit_generator"))
             state_json = decode_text(h5.attr_any(f, "rng_state_json"))
@@ -695,6 +765,7 @@ class System:
                 cache=cache,
                 lmax=lmax,
                 rotation=rotation,
+                translation=translation,
             )
 
     def save_cache(self, filepath: str | Path) -> Self:
@@ -737,7 +808,7 @@ class System:
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
             f.attrs["dt"] = float(self._dt)
-            f.attrs["f_ext"] = float(self._ext)
+            f.attrs["f_ext"] = self._ext
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["lmax"] = h5.optional_nnint(self._lmax)
             f.attrs["angular_grid"] = str(self._angular_grid)
@@ -763,7 +834,7 @@ class System:
             lam = h5.attr_float(f, "lambda")
             mu = h5.attr_float(f, "mu")
             dt = h5.attr_float(f, "dt")
-            f_ext = h5.attr_float(f, "f_ext")
+            f_ext = np.asarray(h5.attr_any(f, "f_ext"), dtype=float)
             f_loc = h5.attr_float_pair(f, "f_loc")
             lmax = h5.attr_optional_nnint(f, "lmax")
             angular_grid = h5.attr_any(f, "angular_grid")
@@ -787,8 +858,8 @@ class System:
             assert dt == self._dt, (
                 "Inconsistent time steps between the system and the cache file"
             )
-            assert f_ext == self._ext, (
-                "Inconsistent force magnitudes between the system and the cache file"
+            assert np.array_equal(f_ext, np.asarray(self._ext)), (
+                "Inconsistent force vectors between the system and the cache file"
             )
             assert f_loc == self._loc, (
                 "Inconsistent force-application points between the system and the cache file"
