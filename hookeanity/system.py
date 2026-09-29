@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 from scipy.sparse.linalg import LinearOperator, expm_multiply
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
+from scipy.special import sph_legendre_p
 
 from . import h5
 from .base import DIM, Grid, Real, VectorValues, instance
@@ -38,7 +39,8 @@ class System:
         _mu (float): Lamé mu coefficient.
         _dt (float): Integration time step
         _ext (numpy.ndarray): Lab-frame external point-force vector.
-        _loc (tuple[float, float]): Solid angle specifying the location of the external point force.
+        _loc (tuple[float, float]): Reference solid angle of the external point force.
+        _loc_lab_fixed (bool): Whether the force location is fixed in lab axes.
         _lmax (int | None): Order of the spherical-harmonic expansion of the Sobolev-Matérn kernels.
         _kbt (float): Temperature.
         _rng (numpy.random.Generator): Numpy random-number generator.
@@ -67,7 +69,7 @@ class System:
         mu: Real,
         dt: Real,
         f_ext: tuple[Real, Real, Real] | NDArray[np.floating] = (0.0, 0.0, 0.0),
-        f_loc: tuple[Real, Real] = (0.0, 0.0),
+        f_loc: tuple[Real, Real] | tuple[Real, Real, bool] = (0.0, 0.0),
         kbt: Real = 1.0,
         gamma: Real = 1.0,
         state: VectorValues | None = None,
@@ -88,7 +90,8 @@ class System:
             mu: Lamé's second parameter (shear modulus).
             dt: Integration time step.
             f_ext: Three-component lab-frame force vector; defaults to zero.
-            f_loc: Solid angle specifying the location of the external point force.
+            f_loc: Reference solid angle. An optional third value of False keeps
+                the point attached to the body; the default is lab-fixed.
             kbt: Effective temperature in units of energy defaults to one.
             gamma: Effective dissipative coefficient.
             state: Current state of the system defaults to zeros.
@@ -119,7 +122,7 @@ class System:
         self._mu = float(mu)
         self._dt = float(dt)
         self._ext = self._validated_vector(f_ext, "f_ext")
-        self._loc = (float(f_loc[0]), float(f_loc[1]))
+        self._loc, self._loc_lab_fixed = self._validated_force_location(f_loc)
         self._lmax = None if lmax is None else int(lmax)
         self._kbt = float(kbt)
         self._method = method
@@ -143,13 +146,12 @@ class System:
             if state is None
             else np.asarray(state, dtype=float).copy()
         )
-        if self._state.shape != (self.npoints, DIM) or not np.isfinite(
-            self._state
-        ).all():
+        if (
+            self._state.shape != (self.npoints, DIM)
+            or not np.isfinite(self._state).all()
+        ):
             raise ValueError("state must be a finite (npoints, 3) array")
-        initial_shift = np.average(
-            self._state, axis=0, weights=self._volume_weights
-        )
+        initial_shift = np.average(self._state, axis=0, weights=self._volume_weights)
         self._state -= initial_shift
         self._translation += self._rotation @ initial_shift
 
@@ -250,12 +252,9 @@ class System:
 
         # Additive forces
         self.info("  additive forces")
-        direction = np.asarray(self._ext, dtype=float)
-        values = np.array(
-            [chi(np.array(self._loc)) for chi in inter._angular_functions]
-        )
-        force = values[:, None] * direction[None, :]
-        self._force = force.ravel()
+        self._force_angular_oper = np.asarray(inter._matern._oper, dtype=float).copy()
+        self._prepare_force_basis()
+        self._update_force()
         self._build_surface_reduction()
 
     def _build_surface_reduction(self):
@@ -361,6 +360,68 @@ class System:
             raise ValueError(f"{name} must be a finite three-component vector")
         return result.copy()
 
+    @staticmethod
+    def _validated_force_location(
+        value: tuple[Real, Real] | tuple[Real, Real, bool],
+    ) -> tuple[tuple[float, float], bool]:
+        """Validate a reference solid angle and its lab-fixed flag."""
+        if len(value) not in (2, 3) or (len(value) == 3 and type(value[2]) is not bool):
+            raise ValueError("f_loc must be (theta, phi) or (theta, phi, bool)")
+        theta, phi = float(value[0]), float(value[1])
+        if not np.isfinite((theta, phi)).all() or not 0 <= theta <= np.pi:
+            raise ValueError("f_loc requires finite angles with theta in [0, pi]")
+        return (theta, phi), True if len(value) == 2 else value[2]
+
+    def _prepare_force_basis(self) -> None:
+        """Prepare the real spherical-harmonic orders for force evaluation."""
+        lmax = int(np.sqrt(self.mesh[1])) if self._lmax is None else self._lmax
+        orders = [(ell, m) for ell in range(lmax + 1) for m in range(-ell, ell + 1)]
+        if (
+            self._force_angular_oper.shape != (self.mesh[1], len(orders))
+            or not np.isfinite(self._force_angular_oper).all()
+        ):
+            raise ValueError("Invalid cached angular force coefficients")
+        self._force_ell, self._force_m = np.asarray(orders, dtype=int).T
+
+    def _force_angles(self) -> tuple[float, float]:
+        """Return the current force application angle in body coordinates."""
+        if not self._loc_lab_fixed:
+            return self._loc
+        theta, phi = self._loc
+        lab_direction = np.array(
+            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+        )
+        body_direction = lab_direction @ self._rotation
+        body_theta = float(np.arccos(np.clip(body_direction[2], -1.0, 1.0)))
+        body_phi = (
+            0.0
+            if np.hypot(body_direction[0], body_direction[1]) < 1e-12
+            else float(np.arctan2(body_direction[1], body_direction[0]) % (2 * np.pi))
+        )
+        return body_theta, body_phi
+
+    def _update_force(self) -> None:
+        """Evaluate the lab-frame force distribution at the current body angle."""
+        theta, phi = self._force_angles()
+        harmonics = np.asarray(
+            sph_legendre_p(self._force_ell, np.abs(self._force_m), theta)
+        ).reshape(-1)
+        m = self._force_m
+        fourier = np.ones(len(m), dtype=float)
+        nonzero = m != 0
+        signs = np.where(m[nonzero] % 2 == 0, 1.0, -1.0)
+        fourier[nonzero] = (
+            np.sqrt(2)
+            * signs
+            * np.where(
+                m[nonzero] > 0,
+                np.cos(m[nonzero] * phi),
+                np.sin(-m[nonzero] * phi),
+            )
+        )
+        weights = self._force_angular_oper @ (harmonics * fourier)
+        self._force = (weights[:, None] * self._ext[None, :]).ravel()
+
     def _build_rotation_projection(self) -> None:
         """Fit full-body rigid motions while preserving bulk equilibrium."""
         if (
@@ -413,6 +474,8 @@ class System:
 
     def _body_force(self) -> NDArray[np.floating]:
         """Express the lab-fixed surface force in body coordinates."""
+        if self._loc_lab_fixed and np.any(self._ext):
+            self._update_force()
         return (self._force.reshape(-1, DIM) @ self._rotation).ravel()
 
     def _lab_surface(
@@ -422,7 +485,8 @@ class System:
         # The exact OU subclass keeps its original body-frame state contract.
         translation = getattr(self, "_translation", np.zeros(DIM))
         points = (
-            self._center + (reference + displacement - self._center) @ self._rotation.T
+            self._center
+            + (reference + displacement - self._center) @ self._rotation.T
             + translation
         )
         return points, points - reference
@@ -660,6 +724,7 @@ class System:
             f.create_dataset("translation", data=self._translation)
 
             # Metadata as attributes
+            f.attrs["system_format_version"] = 2
             f.attrs["resolution"] = self._resolution
             f.attrs["gamma"] = float(self._gamma)
             f.attrs["lambda"] = float(self._lam)
@@ -667,6 +732,7 @@ class System:
             f.attrs["dt"] = float(self._dt)
             f.attrs["f_ext"] = self._ext
             f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
+            f.attrs["f_loc_lab_fixed"] = self._loc_lab_fixed
             f.attrs["lmax"] = h5.optional_nnint(self._lmax)
             f.attrs["kT"] = float(self._kbt)
             f.attrs["method"] = str(self._method)
@@ -714,6 +780,8 @@ class System:
             return obj
 
         with h5py.File(filepath, "r") as f:
+            if f.attrs.get("system_format_version") != 2:
+                raise ValueError("Incompatible system checkpoint; regenerate it")
             resolution = h5.attr_int_pair(f, "resolution")
             gamma = h5.attr_float(f, "gamma")
             lam = h5.attr_float(f, "lambda")
@@ -721,6 +789,7 @@ class System:
             dt = h5.attr_float(f, "dt")
             f_ext = np.asarray(h5.attr_any(f, "f_ext"), dtype=float)
             f_loc = h5.attr_float_pair(f, "f_loc")
+            f_loc_lab_fixed = bool(h5.attr_any(f, "f_loc_lab_fixed"))
             lmax = h5.attr_optional_nnint(f, "lmax")
             kbt = h5.attr_float(f, "kT")
             method = cast(IntegrationMethod, decode_text(h5.attr_any(f, "method")))
@@ -751,7 +820,7 @@ class System:
                 mu=mu,
                 dt=dt,
                 f_ext=f_ext,
-                f_loc=f_loc,
+                f_loc=(*f_loc, f_loc_lab_fixed),
                 kbt=kbt,
                 gamma=gamma,
                 state=state,
@@ -793,20 +862,19 @@ class System:
                 shuffle=True,
             )
             f.create_dataset(
-                "fext",
-                data=self._force,
+                "force_angular_oper",
+                data=self._force_angular_oper,
                 compression="lzf",
                 shuffle=True,
             )
 
             # Metadata as attributes
+            f.attrs["operator_cache_version"] = 2
             f.attrs["resolution"] = self._resolution
             f.attrs["mesh"] = self.mesh
             f.attrs["lambda"] = float(self._lam)
             f.attrs["mu"] = float(self._mu)
             f.attrs["dt"] = float(self._dt)
-            f.attrs["f_ext"] = self._ext
-            f.attrs["f_loc"] = tuple(float(angle) for angle in self._loc)
             f.attrs["lmax"] = h5.optional_nnint(self._lmax)
             f.attrs["angular_grid"] = str(self._angular_grid)
             f.attrs["rigid_projection"] = self._rigid_projection_marker()
@@ -827,12 +895,12 @@ class System:
             ValueError: On missing cache data in the file.
         """
         with h5py.File(filepath, "r") as f:
+            if f.attrs.get("operator_cache_version") != 2:
+                raise ValueError("Incompatible operator cache; rebuild the cache")
             resolution = h5.attr_int_pair(f, "resolution")
             lam = h5.attr_float(f, "lambda")
             mu = h5.attr_float(f, "mu")
             dt = h5.attr_float(f, "dt")
-            f_ext = np.asarray(h5.attr_any(f, "f_ext"), dtype=float)
-            f_loc = h5.attr_float_pair(f, "f_loc")
             lmax = h5.attr_optional_nnint(f, "lmax")
             angular_grid = h5.attr_any(f, "angular_grid")
             if f.attrs.get("rigid_projection") != self._rigid_projection_marker():
@@ -855,12 +923,6 @@ class System:
             assert dt == self._dt, (
                 "Inconsistent time steps between the system and the cache file"
             )
-            assert np.array_equal(f_ext, np.asarray(self._ext)), (
-                "Inconsistent force vectors between the system and the cache file"
-            )
-            assert f_loc == self._loc, (
-                "Inconsistent force-application points between the system and the cache file"
-            )
             assert lmax == self._lmax, (
                 "Inconsistent spherical-harmonic cutoffs between the system and the cache file"
             )
@@ -872,12 +934,9 @@ class System:
             self._ela = h5.dataset_ndfloat(f, "ela")
             self._bulk_from_surf = h5.dataset_ndfloat(f, "bulk_from_surf")
             self._trac_red = h5.dataset_ndfloat(f, "trac_red")
-            force = h5.dataset_ndfloat(f, "fext")
-            if force.shape != (self.nsurf,):
-                raise ValueError(
-                    f"Expected cached force shape {(self.nsurf,)}, got {force.shape}"
-                )
-            self._force = force
+            self._force_angular_oper = h5.dataset_ndfloat(f, "force_angular_oper")
+            self._prepare_force_basis()
+            self._update_force()
 
         return self
 

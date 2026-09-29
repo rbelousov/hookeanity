@@ -113,14 +113,79 @@ def test_vector_validation(name, invalid):
         System((5, 12), 1.0, 1.0, 1e-2, lmax=5, **{name: invalid})
 
 
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        (),
+        (0.2,),
+        (0.2, 0.3, 0),
+        (0.2, 0.3, 1),
+        (-0.1, 0.0),
+        (np.pi + 0.1, 0.0),
+        (np.nan, 0.0),
+        (0.3, np.inf),
+    ],
+)
+def test_force_location_validation(invalid):
+    """Accept only finite reference angles and a genuine optional bool."""
+    with pytest.raises(ValueError, match="f_loc"):
+        System((5, 12), 1.0, 1.0, 1e-2, lmax=5, f_loc=invalid)
+
+
 @pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
-def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
+@pytest.mark.parametrize("location", [(0.7, 1.2), (0.7, 1.2, True), (0.7, 1.2, False)])
+def test_force_location_frame(angular_grid, resolution, npoints, lmax, location):
+    """Evaluate a lab-fixed angle in the current body frame, or keep a material angle."""
+    force = np.array([0.2, -0.3, 0.5])
+    sys = System(
+        resolution,
+        1.0,
+        1.0,
+        1e-2,
+        f_ext=force,
+        f_loc=location,
+        kbt=0.0,
+        angular_grid=angular_grid,
+        lmax=lmax,
+    )
+    inter = Interpolation(resolution, angular_grid=angular_grid, lmax=lmax)
+    theta, phi = location[:2]
+    lab_direction = np.array(
+        [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+    )
+    first_weights = None
+    for rotvec in ([0.0, 0.0, 0.0], [0.3, -0.2, 0.1], [-0.2, 0.4, 0.3]):
+        rotation = Rotation.from_rotvec(rotvec).as_matrix()
+        sys._rotation = rotation
+        sys._translation = np.array([2.0, -1.0, 0.5])
+        body_force = sys._body_force().reshape(-1, DIM)
+        direction = lab_direction @ rotation if sys._loc_lab_fixed else lab_direction
+        expected_angles = np.array(
+            [
+                np.arccos(np.clip(direction[2], -1, 1)),
+                np.arctan2(direction[1], direction[0]) % (2 * np.pi),
+            ]
+        )
+        weights = np.array([chi(expected_angles) for chi in inter._angular_functions])
+        assert sys._force.reshape(-1, DIM) == pytest.approx(weights[:, None] * force)
+        assert body_force == pytest.approx(weights[:, None] * (force @ rotation))
+        if first_weights is None:
+            first_weights = weights
+        elif sys._loc_lab_fixed:
+            assert weights != pytest.approx(first_weights)
+        else:
+            assert weights == pytest.approx(first_weights)
+
+
+@pytest.mark.parametrize("angular_grid, resolution, npoints, lmax", GRID_CONFIGS)
+@pytest.mark.parametrize("lab_fixed", [True, False])
+def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax, lab_fixed):
     """Test saving and loading system data in the HDF5 format."""
     filepath = tmp_path / "system.h5"
 
     lam, mu, dt = 2.25, 2.0, 1e-2
     gamma, f_ext = 2.5, (0.2, -0.3, 0.5)
-    f_loc = (0.7, 1.2)
+    f_loc = (0.7, 1.2, lab_fixed)
     kbt = 1.5
     method = "trotter"
     rotation = Rotation.from_rotvec([0.1, -0.2, 0.3]).as_matrix()
@@ -148,6 +213,8 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
 
     system.save(filepath)
     with h5py.File(filepath, "r") as f:
+        assert f.attrs["system_format_version"] == 2
+        assert bool(f.attrs["f_loc_lab_fixed"]) is lab_fixed
         assert np.asarray(f.attrs["f_ext"]) == pytest.approx(f_ext)
         assert np.asarray(f["translation"]) == pytest.approx(system.translation())
     sample1 = system._rng.random(5)
@@ -167,7 +234,8 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     assert loaded._dt == dt
     assert loaded._gamma == gamma
     assert loaded._ext == pytest.approx(f_ext)
-    assert loaded._loc == f_loc
+    assert loaded._loc == f_loc[:2]
+    assert loaded._loc_lab_fixed is lab_fixed
     assert loaded._kbt == kbt
     assert loaded.lmax == lmax
     assert loaded._method == method
@@ -185,6 +253,12 @@ def test_save_and_load(tmp_path, angular_grid, resolution, npoints, lmax):
     with h5py.File(filepath, "r+") as f:
         del f["translation"]
     with pytest.raises(KeyError):
+        System.load(filepath)
+
+    system.save(filepath)
+    with h5py.File(filepath, "r+") as f:
+        del f.attrs["system_format_version"]
+    with pytest.raises(ValueError, match="Incompatible system checkpoint"):
         System.load(filepath)
 
 
@@ -353,8 +427,8 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
     sys1.save_cache(cache)
 
     with h5py.File(cache, "r+") as f:
-        f.attrs["f_ext"] = 0.0
-    with pytest.raises(AssertionError, match="force vectors"):
+        del f.attrs["operator_cache_version"]
+    with pytest.raises(ValueError, match="Incompatible operator cache"):
         System(
             resolution,
             2.0,
@@ -385,6 +459,33 @@ def test_system_cache(tmp_path, angular_grid, resolution, npoints, lmax):
     assert np.all(sys1._trac_red == sys2._trac_red)
     assert np.all(sys1._force == sys2._force)
     assert sys1._volume_weights == pytest.approx(sys2._volume_weights)
+
+    rotated = System(
+        resolution,
+        2.0,
+        2.0,
+        1e-2,
+        lmax=lmax,
+        cache=cache,
+        angular_grid=angular_grid,
+        f_ext=(0.3, -0.2, 0.1),
+        f_loc=(0.7, 1.2),
+        rotation=Rotation.from_rotvec([0.2, 0.1, -0.3]).as_matrix(),
+    )
+    uncached = System(
+        resolution,
+        2.0,
+        2.0,
+        1e-2,
+        lmax=lmax,
+        angular_grid=angular_grid,
+        f_ext=(0.3, -0.2, 0.1),
+        f_loc=(0.7, 1.2),
+        rotation=rotated.rotation(),
+    )
+    assert rotated._trac_red == pytest.approx(sys1._trac_red)
+    assert rotated._force == pytest.approx(uncached._force)
+    assert not np.array_equal(rotated._force, sys1._force)
 
     with h5py.File(cache, "r+") as f:
         del f.attrs["rigid_projection"]
@@ -830,6 +931,7 @@ def test_tangential_force_rotates_frame(
         1.0,
         1e-2,
         f_ext=(1.0, 0.0, 0.0),
+        f_loc=(0.7, 1.2),
         kbt=0.0,
         method=method,
         angular_grid=angular_grid,
@@ -840,6 +942,7 @@ def test_tangential_force_rotates_frame(
         sys._force.reshape(-1, DIM) @ start
     )
     force_step = sys._body_force() * sys._tf
+    start_distribution = sys._force.copy()
     if method == "strang":
         force_step = expm_multiply(sys._trac_oper, force_step, traceA=sys._trace)
     expected_internal, shift, omega = sys._split_rigid(force_step)
@@ -850,9 +953,11 @@ def test_tangential_force_rotates_frame(
     assert sys.rotation() == pytest.approx(
         start @ Rotation.from_rotvec(omega).as_matrix()
     )
+    assert sys._force == pytest.approx(start_distribution)
     assert sys._body_force().reshape(-1, DIM) == pytest.approx(
         sys._force.reshape(-1, DIM) @ sys.rotation()
     )
+    assert sys._force != pytest.approx(start_distribution)
     residual = sys.state()
     centered = sys._reference_xyz - sys._center
     modes = np.stack(
