@@ -13,10 +13,10 @@ from typing import Any, Literal, Self, cast
 import h5py
 import numpy as np
 from numpy.typing import NDArray
-from scipy.sparse.linalg import LinearOperator, expm_multiply
+from scipy.linalg import expm
+from scipy.sparse.linalg import LinearOperator
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
-from scipy.special import sph_legendre_p
 
 from . import h5
 from .base import DIM, Grid, Real, VectorValues, instance
@@ -53,6 +53,7 @@ class System:
         _method (hookeanity.system.IntegrationMethod): Time-integration method.
         _trac_oper (scipy.sparse.linalg.LinearOperator): Matrix traction operator for Trotter or Strang methods of time integration.
         _trace (hookeanity.Real): Trace of the matrix traction operator for Trotter or Strang methods of integration.
+        _propagator (numpy.ndarray): Precomputed traction propagator for Trotter or Strang steps.
         _std (numpy.ndarray): Intensity of the thermal fluctuations.
         _mesh (tuple[int, int]): Number of points in the radial and solid-angle components.
         _grid (hookeanity.Grid): 3D mesh grid.
@@ -123,6 +124,10 @@ class System:
         self._dt = float(dt)
         self._ext = self._validated_vector(f_ext, "f_ext")
         self._loc, self._loc_lab_fixed = self._validated_force_location(f_loc)
+        theta, phi = self._loc
+        self._force_reference_direction = np.array(
+            (np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta))
+        )
         self._lmax = None if lmax is None else int(lmax)
         self._kbt = float(kbt)
         self._method = method
@@ -159,9 +164,11 @@ class System:
         if self._method == "trotter":
             self.info("  Trotter traction operator")
             self._trac_oper, self._trace = self._traction_operator(self._tf)
+            self._propagator = expm(self._trac_red * self._tf)
         elif self._method == "strang":
             self.info("  Strang traction operator")
             self._trac_oper, self._trace = self._traction_operator(self._tf / 2)
+            self._propagator = expm(self._trac_red * (self._tf / 2))
 
         self._std = np.sqrt(2 * self._kbt * self._tf)
 
@@ -252,8 +259,7 @@ class System:
 
         # Additive forces
         self.info("  additive forces")
-        self._force_angular_oper = np.asarray(inter._matern._oper, dtype=float).copy()
-        self._prepare_force_basis()
+        self._prepare_force_kernel()
         self._update_force()
         self._build_surface_reduction()
 
@@ -372,54 +378,57 @@ class System:
             raise ValueError("f_loc requires finite angles with theta in [0, pi]")
         return (theta, phi), True if len(value) == 2 else value[2]
 
-    def _prepare_force_basis(self) -> None:
-        """Prepare the real spherical-harmonic orders for force evaluation."""
+    def _prepare_force_kernel(self) -> None:
+        """Prepare the zonal Matérn kernel and its cardinal interpolation map."""
         lmax = int(np.sqrt(self.mesh[1])) if self._lmax is None else self._lmax
-        orders = [(ell, m) for ell in range(lmax + 1) for m in range(-ell, ell + 1)]
+        surface_weights = self._volume_weights[-self.mesh[1] :]
         if (
-            self._force_angular_oper.shape != (self.mesh[1], len(orders))
-            or not np.isfinite(self._force_angular_oper).all()
+            surface_weights.shape != (self.mesh[1],)
+            or not np.isfinite(surface_weights).all()
+            or np.any(surface_weights <= 0)
+        ):
+            raise ValueError("Invalid cached angular force weights")
+        # Angular quadrature weights sum to the surface area of the unit sphere.
+        angular_weights = surface_weights * (4 * np.pi / surface_weights.sum())
+        angles = self._grid[-self.mesh[1] :, 1:]
+        st = np.sin(angles[:, 0])
+        self._force_node_vectors = np.column_stack(
+            (st * np.cos(angles[:, 1]), st * np.sin(angles[:, 1]), np.cos(angles[:, 0]))
+        )
+        if not hasattr(self, "_force_kernel_coefficients"):
+            grain = angular_weights.mean()
+            ell = np.arange(lmax + 1)
+            self._force_kernel_coefficients = (
+                (2 * ell + 1) / (4 * np.pi) * (1 + ell * (ell + 1) * grain) ** -4
+            )
+        if not hasattr(self, "_force_kernel_inverse"):
+            node_cosines = np.clip(
+                self._force_node_vectors @ self._force_node_vectors.T, -1.0, 1.0
+            )
+            gram = np.polynomial.legendre.legval(
+                node_cosines, self._force_kernel_coefficients
+            )
+            self._force_kernel_inverse = (
+                np.linalg.pinv(gram) / np.sqrt(angular_weights)[:, None]
+            )
+        if (
+            self._force_kernel_coefficients.shape != (lmax + 1,)
+            or self._force_kernel_inverse.shape != (self.mesh[1], self.mesh[1])
+            or not np.isfinite(self._force_kernel_coefficients).all()
+            or not np.isfinite(self._force_kernel_inverse).all()
         ):
             raise ValueError("Invalid cached angular force coefficients")
-        self._force_ell, self._force_m = np.asarray(orders, dtype=int).T
-
-    def _force_angles(self) -> tuple[float, float]:
-        """Return the current force application angle in body coordinates."""
-        if not self._loc_lab_fixed:
-            return self._loc
-        theta, phi = self._loc
-        lab_direction = np.array(
-            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
-        )
-        body_direction = lab_direction @ self._rotation
-        body_theta = float(np.arccos(np.clip(body_direction[2], -1.0, 1.0)))
-        body_phi = (
-            0.0
-            if np.hypot(body_direction[0], body_direction[1]) < 1e-12
-            else float(np.arctan2(body_direction[1], body_direction[0]) % (2 * np.pi))
-        )
-        return body_theta, body_phi
 
     def _update_force(self) -> None:
         """Evaluate the lab-frame force distribution at the current body angle."""
-        theta, phi = self._force_angles()
-        harmonics = np.asarray(
-            sph_legendre_p(self._force_ell, np.abs(self._force_m), theta)
-        ).reshape(-1)
-        m = self._force_m
-        fourier = np.ones(len(m), dtype=float)
-        nonzero = m != 0
-        signs = np.where(m[nonzero] % 2 == 0, 1.0, -1.0)
-        fourier[nonzero] = (
-            np.sqrt(2)
-            * signs
-            * np.where(
-                m[nonzero] > 0,
-                np.cos(m[nonzero] * phi),
-                np.sin(-m[nonzero] * phi),
-            )
+        direction = (
+            self._force_reference_direction @ self._rotation
+            if self._loc_lab_fixed
+            else self._force_reference_direction
         )
-        weights = self._force_angular_oper @ (harmonics * fourier)
+        cosines = np.clip(self._force_node_vectors @ direction, -1.0, 1.0)
+        kernel = np.polynomial.legendre.legval(cosines, self._force_kernel_coefficients)
+        weights = self._force_kernel_inverse @ kernel
         self._force = (weights[:, None] * self._ext[None, :]).ravel()
 
     def _build_rotation_projection(self) -> None:
@@ -672,7 +681,7 @@ class System:
             Updated state vector after one Trotter splitting step.
         """
         surf = self._surface_state()
-        surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
+        surf = self._propagator @ surf
         flu = self._std * self._rng.normal(size=self.nsurf)
         surf = surf + self._body_force() * self._tf
         return self._finish_step(surf, flu)
@@ -686,12 +695,10 @@ class System:
             Updated state vector after one Strang splitting step.
         """
         surf = self._surface_state()
-        surf = expm_multiply(self._trac_oper, surf, traceA=self._trace)
+        surf = self._propagator @ surf
         flu = self._std * self._rng.normal(size=self.nsurf)
-        surf = expm_multiply(
-            self._trac_oper, surf + self._body_force() * self._tf, traceA=self._trace
-        )
-        flu = expm_multiply(self._trac_oper, flu, traceA=self._trace)
+        surf = self._propagator @ (surf + self._body_force() * self._tf)
+        flu = self._propagator @ flu
         return self._finish_step(surf, flu)
 
     def save(self, filepath: str | Path) -> Self:
@@ -862,14 +869,17 @@ class System:
                 shuffle=True,
             )
             f.create_dataset(
-                "force_angular_oper",
-                data=self._force_angular_oper,
+                "force_kernel_inverse",
+                data=self._force_kernel_inverse,
                 compression="lzf",
                 shuffle=True,
             )
+            f.create_dataset(
+                "force_kernel_coefficients", data=self._force_kernel_coefficients
+            )
 
             # Metadata as attributes
-            f.attrs["operator_cache_version"] = 2
+            f.attrs["operator_cache_version"] = 3
             f.attrs["resolution"] = self._resolution
             f.attrs["mesh"] = self.mesh
             f.attrs["lambda"] = float(self._lam)
@@ -895,7 +905,8 @@ class System:
             ValueError: On missing cache data in the file.
         """
         with h5py.File(filepath, "r") as f:
-            if f.attrs.get("operator_cache_version") != 2:
+            version = f.attrs.get("operator_cache_version")
+            if version not in (2, 3):
                 raise ValueError("Incompatible operator cache; rebuild the cache")
             resolution = h5.attr_int_pair(f, "resolution")
             lam = h5.attr_float(f, "lambda")
@@ -934,8 +945,22 @@ class System:
             self._ela = h5.dataset_ndfloat(f, "ela")
             self._bulk_from_surf = h5.dataset_ndfloat(f, "bulk_from_surf")
             self._trac_red = h5.dataset_ndfloat(f, "trac_red")
-            self._force_angular_oper = h5.dataset_ndfloat(f, "force_angular_oper")
-            self._prepare_force_basis()
+            if version == 2:
+                old_operator = h5.dataset_ndfloat(f, "force_angular_oper")
+                lmax = int(np.sqrt(self.mesh[1])) if self._lmax is None else self._lmax
+                if (
+                    old_operator.shape != (self.mesh[1], (lmax + 1) ** 2)
+                    or not np.isfinite(old_operator).all()
+                ):
+                    raise ValueError("Invalid cached angular force coefficients")
+            else:
+                self._force_kernel_inverse = h5.dataset_ndfloat(
+                    f, "force_kernel_inverse"
+                )
+                self._force_kernel_coefficients = h5.dataset_ndfloat(
+                    f, "force_kernel_coefficients"
+                )
+            self._prepare_force_kernel()
             self._update_force()
 
         return self
